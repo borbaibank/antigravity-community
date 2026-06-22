@@ -13,7 +13,7 @@
 | **URL** | `binance-multistrategy` |
 | **Full URL** | https://tkbanker.gumroad.com/l/binance-multistrategy |
 | **Profile** | https://tkbanker.gumroad.com |
-| **Price** | $79 (ปรับได้) |
+| **Price** | $1,900 USD |
 | **Currency** | USD |
 | **Content type** | Digital product |
 

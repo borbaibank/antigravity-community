@@ -9,7 +9,7 @@ param(
     [string]$ZipPath = "",
     [string]$Slug = "binance-multistrategy",
     [string]$ProductName = "Antigravity Pro - Tab11-Tab18 Strategy Pack",
-    [int]$PriceCents = 7900,
+    [int]$PriceCents = 190000,
     [string]$AccessToken = $env:GUMROAD_ACCESS_TOKEN
 )
 

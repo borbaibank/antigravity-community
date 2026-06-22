@@ -12,6 +12,7 @@
 | Gumroad profile URL | https://tkbanker.gumroad.com |
 | Gumroad product slug | `binance-multistrategy` |
 | Gumroad product URL | https://tkbanker.gumroad.com/l/binance-multistrategy |
+| Gumroad price | $1,900 USD |
 | Support | https://github.com/borbaibank/antigravity-community/issues |
 
 > **Gumroad:** สร้าง product แล้วตั้ง custom URL เป็น `binance-multistrategy`  
