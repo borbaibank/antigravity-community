@@ -1,7 +1,7 @@
 # Gumroad — Antigravity Pro (copy-paste)
 
-ลิงก์ตั้งค่าแล้วสำหรับ **borbaibank** (จาก `git remote origin`)  
-ถ้า Gumroad username ต่างจาก GitHub ให้แก้ `docs/PUBLISH_LINKS.md` แล้ว rebuild
+ลิงก์ตั้งค่าแล้วสำหรับ **tkbanker** (`docs/PUBLISH_LINKS.md`)  
+อัปโหลดอัตโนมัติ: `.\scripts\publish_gumroad.ps1` (ต้องมี `GUMROAD_ACCESS_TOKEN` ใน `.env`)
 
 ---
 
@@ -10,8 +10,9 @@
 | Field | ค่า |
 |-------|-----|
 | **Name** | Antigravity Pro — Tab11–Tab18 Strategy Pack |
-| **URL** | `antigravity-pro` |
-| **Full URL** | https://borbaibank.gumroad.com/l/antigravity-pro |
+| **URL** | `binance-multistrategy` |
+| **Full URL** | https://tkbanker.gumroad.com/l/binance-multistrategy |
+| **Profile** | https://tkbanker.gumroad.com |
 | **Price** | $79 (ปรับได้) |
 | **Currency** | USD |
 | **Content type** | Digital product |
@@ -93,5 +94,5 @@ Support: https://github.com/borbaibank/antigravity-community/issues
 | ที่ | URL |
 |----|-----|
 | Community | https://github.com/borbaibank/antigravity-community |
-| Pro | https://borbaibank.gumroad.com/l/antigravity-pro |
+| Pro | https://tkbanker.gumroad.com/l/binance-multistrategy |
 | Dev repo (private) | https://github.com/borbaibank/multitrategy |

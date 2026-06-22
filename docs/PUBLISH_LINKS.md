@@ -8,9 +8,11 @@
 | Community repo | `antigravity-community` |
 | Community URL | https://github.com/borbaibank/antigravity-community |
 | Dev repo | https://github.com/borbaibank/multitrategy |
-| Gumroad product slug | `antigravity-pro` |
-| Gumroad URL | https://borbaibank.gumroad.com/l/antigravity-pro |
+| Gumroad profile | `tkbanker` |
+| Gumroad profile URL | https://tkbanker.gumroad.com |
+| Gumroad product slug | `binance-multistrategy` |
+| Gumroad product URL | https://tkbanker.gumroad.com/l/binance-multistrategy |
 | Support | https://github.com/borbaibank/antigravity-community/issues |
 
-> **Gumroad:** สร้าง product แล้วตั้ง custom URL เป็น `antigravity-pro`  
-> ถ้า Gumroad username ไม่ใช่ `borbaibank` แก้แถว Gumroad URL ด้านบน
+> **Gumroad:** สร้าง product แล้วตั้ง custom URL เป็น `binance-multistrategy`  
+> อัปโหลด zip: `.\scripts\publish_gumroad.ps1` (ต้องมี `GUMROAD_ACCESS_TOKEN` ใน `.env`)
