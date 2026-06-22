@@ -3,7 +3,7 @@
 **Antigravity** — บอทเทรด Binance USDT-M Futures แบบ multi-strategy รันบนเครื่องตัวเอง (self-hosted)  
 รุ่น Community เปิดให้ใช้ฟรี **10 กลยุทธ์ (Tab1–Tab10)** พร้อม FastAPI dashboard
 
-> ต้องการ Tab11–Tab18 (Volume / Momentum pack)? ดู **[Antigravity Pro](https://tkbanker.gumroad.com/l/gsdcjhv)** — add-on แยกติดตั้งทับ Community
+> ต้องการ Tab11–Tab18 (Volume / Momentum pack)? ดู **[Antigravity Pro](https://tkbanker.gumroad.com/l/gsdcjhv)** https://tkbanker.gumroad.com/l/gsdcjhv — add-on แยกติดตั้งทับ Community
 
 ---
 
