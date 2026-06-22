@@ -50,7 +50,7 @@
 pip install -e ./antigravity_pro
 ```
 
-รายละเอียด: [Antigravity Pro on Gumroad](https://tkbanker.gumroad.com/l/binance-multistrategy)
+รายละเอียด: [Antigravity Pro on Gumroad]([https://tkbanker.gumroad.com/l/binance-multistrategy](https://tkbanker.gumroad.com/l/gsdcjhv))
 
 ---
 
