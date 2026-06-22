@@ -1,0 +1,33 @@
+---
+description: Keep AGENTS.md and context.md updated when changing the Antigravity bot
+alwaysApply: true
+---
+
+# Antigravity — Documentation Updates
+
+Read `context.md` for project overview. Read `.agents/AGENTS.md` before changing trading/runtime code.
+
+## After every code/config/dashboard/trading change
+
+1. **`.agents/AGENTS.md`** — append Change Log entry (`### YYYY-MM-DD: title`) in the same work session
+2. Include: files changed, problem/goal, fix, impact, verify steps
+3. If committing, include `AGENTS.md` in the same commit
+
+## Also update `context.md` when the big picture changes
+
+Update in the **same work session** if any of these changed:
+
+- Tab map (add/remove tab, timeframe, evaluator wiring)
+- Architecture (new loops, signal flow, core file moves)
+- Important defaults in `config.py` (`STARTUP_ENABLED_TABS`, notional, max positions, scan limit)
+- New env vars affecting runtime (`LOCAL_SLTP`, `ORDER_ENV` behavior, etc.)
+- `paper_state.json` schema or critical invariants (hedge rules, state keys)
+- New frequently-used API endpoints or scripts
+
+**Do not** update `context.md` for small bug fixes, minor UI tweaks, or parameter-only strategy tweaks — `AGENTS.md` Change Log is enough.
+
+## Checklist before finishing a task
+
+- [ ] `AGENTS.md` Change Log updated?
+- [ ] Big-picture change → `context.md` updated too?
+- [ ] Hedge/order/sync edits → ran `tests/test_server_hedge.py`?

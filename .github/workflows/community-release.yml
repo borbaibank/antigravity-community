@@ -1,0 +1,40 @@
+# Build community zip on tag community-v* (e.g. community-v1.0.0)
+name: Community release
+
+on:
+  push:
+    tags:
+      - "community-v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build community dist
+        run: python scripts/build_community.py
+
+      - name: Create zip
+        run: |
+          cd dist/community
+          zip -r ../antigravity-community.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-community
+          path: dist/antigravity-community.zip
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/antigravity-community.zip
+          generate_release_notes: true

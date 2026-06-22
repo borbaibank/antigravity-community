@@ -1,0 +1,34 @@
+# Secrets
+.env
+
+# Python env & cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime state (large, volatile)
+paper_state.json
+paper_state.*.json
+paper_state_backups/
+
+# Logs
+server_log.txt
+server_log.txt.*
+server_logs/
+logs.txt
+
+# Archives & exports
+archive/
+trades_*.csv
+test_out*.txt
+
+# Process / temp
+server.lock
+*.tmp
+*.bak
+*.backup*
+
+# Git
+.git/

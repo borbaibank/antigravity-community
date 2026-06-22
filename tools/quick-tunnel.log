@@ -1,0 +1,69 @@
+﻿=== Quick Tunnel started 2026-06-21 21:29:10 UTC -> http://127.0.0.1:8765 ===
+2026-06-21 21:29:10 UTC  2026-06-21T21:29:10Z INF Thank you for trying Cloudflare Tunnel. Doing so, without a Cloudflare account, is a quick way to experiment and try it out. However, be aware that these account-less Tunnels have no uptime guarantee, are subject to the Cloudflare Online Services Terms of Use (https://www.cloudflare.com/website-terms/), and Cloudflare reserves the right to investigate your use of Tunnels for violations of such terms. If you intend to use Tunnels in production you should use a pre-created named tunnel by following: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+2026-06-21 21:29:10 UTC  2026-06-21T21:29:10Z INF Requesting new quick Tunnel on trycloudflare.com...
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF +--------------------------------------------------------------------------------------------+
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  https://neither-spelling-dis-during.trycloudflare.com                                     |
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF +--------------------------------------------------------------------------------------------+
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Cannot determine default configuration path. No file [config.yml config.yaml] in [~/.cloudflared ~/.cloudflare-warp ~/cloudflare-warp]
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Version 2026.6.1 (Checksum 5253e66f1f493c4e13539749f1aa86fd0c61e3072900fec29a44ba046a6d97e2)
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF GOOS: windows, GOVersion: go1.26.4, GoArch: amd64
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Settings: map[ha-connections:1 protocol:quic url:http://127.0.0.1:8765]
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF cloudflared will not automatically update on Windows systems.
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Generated Connector ID: 3c45eab6-ec67-4942-bd40-b1364bc5a6ae
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Initial protocol quic
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF ICMP proxy will use 192.168.0.108 as source for IPv4
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF ICMP proxy will use fe80::6fbf:dc27:5c24:5347 in zone Ethernet as source for IPv6
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF cloudflared does not support loading the system root certificate pool on Windows. Please use --origin-ca-pool <PATH> to specify the path to the certificate pool
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF ICMP proxy will use 192.168.0.108 as source for IPv4
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveID(65074) CurveP256] connIndex=0 event=0 ip=198.41.200.53
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF ICMP proxy will use fe80::6fbf:dc27:5c24:5347 in zone Ethernet as source for IPv6
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Starting metrics server on 127.0.0.1:20242/metrics
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF +-------------------------------------------------------------------------------------+
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |                               CONNECTIVITY PRE-CHECKS                               |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF +-------------------------------------------------------------------------------------+
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  COMPONENT         TARGET                     STATUS  DETAILS                       |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  DNS Resolution    region1.v2.argotunnel.com  PASS    DNS Resolved successfully     |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  DNS Resolution    region2.v2.argotunnel.com  PASS    DNS Resolved successfully     |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  UDP Connectivity  region1.v2.argotunnel.com  PASS    QUIC connection successful    |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  UDP Connectivity  region2.v2.argotunnel.com  PASS    QUIC connection successful    |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  TCP Connectivity  region1.v2.argotunnel.com  PASS    HTTP/2 connection successful  |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  TCP Connectivity  region2.v2.argotunnel.com  PASS    HTTP/2 connection successful  |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  Cloudflare API    api.cloudflare.com:443     PASS    API is reachable              |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |                                                                                     |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF |  SUMMARY: Environment is healthy. cloudflared will use 'quic' as primary protocol.  |
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF +-------------------------------------------------------------------------------------+
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region1.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="DNS Resolution" details="DNS Resolved successfully" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region2.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="UDP Connectivity" details="QUIC connection successful" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region1.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="UDP Connectivity" details="QUIC connection successful" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region2.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region1.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="TCP Connectivity" details="HTTP/2 connection successful" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=region2.v2.argotunnel.com
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck component="Cloudflare API" details="API is reachable" run_id=825cf41f-4025-44be-9f6b-1a160381b67b status=pass target=api.cloudflare.com:443
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF precheck complete hard_fail=false run_id=825cf41f-4025-44be-9f6b-1a160381b67b suggested_protocol=quic
+2026-06-21 21:29:16 UTC  2026-06-21T21:29:16Z INF Registered tunnel connection connIndex=0 connection=85b39941-6aa4-459b-85fe-d8ec2233801b event=0 ip=198.41.200.53 location=sin22 protocol=quic
+2026-06-22 08:09:09 UTC  2026-06-22T08:09:09Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:09 UTC  2026-06-22T08:09:09Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:13 UTC  2026-06-22T08:09:13Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:13 UTC  2026-06-22T08:09:13Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:18 UTC  2026-06-22T08:09:18Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:18 UTC  2026-06-22T08:09:18Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:22 UTC  2026-06-22T08:09:22Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:22 UTC  2026-06-22T08:09:22Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:26 UTC  2026-06-22T08:09:26Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:26 UTC  2026-06-22T08:09:26Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:30 UTC  2026-06-22T08:09:30Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:30 UTC  2026-06-22T08:09:30Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:09:34 UTC  2026-06-22T08:09:34Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:09:34 UTC  2026-06-22T08:09:34Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com
+2026-06-22 08:10:31 UTC  2026-06-22T08:10:31Z ERR  error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:8765
+2026-06-22 08:10:31 UTC  2026-06-22T08:10:31Z ERR Request failed error="Unable to reach the origin service. The service may be down or it may not be responding to traffic from cloudflared: dial tcp 127.0.0.1:8765: connectex: No connection could be made because the target machine actively refused it." connIndex=0 dest=https://neither-spelling-dis-during.trycloudflare.com/ws event=0 ip=198.41.200.53 type=ws
+>>> PUBLIC URL: https://neither-spelling-dis-during.trycloudflare.com

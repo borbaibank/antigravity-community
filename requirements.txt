@@ -1,0 +1,10 @@
+ccxt
+pandas
+pyarrow
+tqdm
+numpy
+fastapi
+uvicorn[standard]
+httpx
+websockets
+python-dotenv

@@ -1,0 +1,3915 @@
+
+        const formatMoney = (n) => {
+            const v = Number(n);
+            if (!Number.isFinite(v)) return '$0.00';
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v);
+        };
+        function signedMoney(n) {
+            const v = Number(n);
+            if (!Number.isFinite(v)) return '$0.00';
+            return (v >= 0 ? '+' : '') + formatMoney(v);
+        }
+        function pnlColorClass(n) {
+            const v = Number(n);
+            return 'value ' + (v > 0 ? 'green' : v < 0 ? 'red' : '');
+        }
+
+        function updateFundingFeeCard(data) {
+            const pairs = [
+                ['fundingFeeVal', 'fundingFeeSub'],
+                ['exFundingFeeVal', 'exFundingFeeSub'],
+            ];
+            const acct = data.pnl_summary && data.pnl_summary.account;
+            if (!data.live_mode || !acct) {
+                for (const [valId, subId] of pairs) {
+                    const valEl = document.getElementById(valId);
+                    const subEl = document.getElementById(subId);
+                    if (!valEl) continue;
+                    valEl.innerText = '—';
+                    valEl.className = 'value';
+                    if (subEl) {
+                        subEl.innerText = data.live_mode
+                            ? 'Waiting for Binance income…'
+                            : 'Paper — funding not simulated';
+                    }
+                }
+                return;
+            }
+            const funding = Number(acct.funding || 0);
+            const today = acct.today || {};
+            const todayFunding = Number(today.funding || 0);
+            const valText = signedMoney(funding);
+            const valClass = pnlColorClass(funding);
+            const subText = Math.abs(todayFunding) > 0.000001
+                ? `All-time · Today ${signedMoney(todayFunding)} UTC`
+                : 'Cumulative · Binance FUNDING_FEE';
+            for (const [valId, subId] of pairs) {
+                const valEl = document.getElementById(valId);
+                const subEl = document.getElementById(subId);
+                if (!valEl) continue;
+                valEl.innerText = valText;
+                valEl.className = valClass;
+                if (subEl) subEl.innerText = subText;
+            }
+        }
+
+        function computeTradingFeeStats(data) {
+            const acct = data.pnl_summary && data.pnl_summary.account;
+            const eaToday = data.exchange_account && data.exchange_account.today_profit;
+            const todayUtc = new Date().toISOString().slice(0, 10);
+            const hist = closedTradesForStats(data);
+            let totalFee = 0;
+            let todayFee = 0;
+
+            for (const h of hist) {
+                const fee = Math.abs(Number(h.fee_usd || 0));
+                if (fee <= 0) continue;
+                totalFee += fee;
+                const exitDay = String(h.exit_time || '').slice(0, 10);
+                if (exitDay === todayUtc) todayFee += fee;
+            }
+
+            if (data.live_mode) {
+                const acctCommission = Math.abs(Number((acct && acct.commission) || 0));
+                const todayCommission = Math.abs(
+                    Number((acct && acct.today && acct.today.commission) || (eaToday && eaToday.commission) || 0)
+                );
+                if (acctCommission > totalFee) totalFee = acctCommission;
+                if (todayCommission > todayFee) todayFee = todayCommission;
+            }
+
+            let avgFeeDay = null;
+            const series = data.daily_profit_30d || [];
+            if (data.live_mode && series.length > 0) {
+                const feeSum = series.reduce((sum, row) => sum + Math.abs(Number(row.commission || 0)), 0);
+                avgFeeDay = feeSum / series.length;
+            } else {
+                const activityTimes = [];
+                for (const h of hist) {
+                    const rawTime = h.entry_time || h.exit_time;
+                    const dt = new Date(normalizeIsoUtc(rawTime));
+                    if (!Number.isNaN(dt.getTime())) activityTimes.push(dt);
+                }
+                for (const p of Object.values(data.open_positions || {})) {
+                    const dt = new Date(normalizeIsoUtc(p.entry_time));
+                    if (!Number.isNaN(dt.getTime())) activityTimes.push(dt);
+                }
+                if (activityTimes.length > 0 && totalFee > 0) {
+                    const firstActivity = new Date(Math.min(...activityTimes.map(dt => dt.getTime())));
+                    const daySpan = Math.max(1, (Date.now() - firstActivity.getTime()) / (1000 * 60 * 60 * 24));
+                    avgFeeDay = totalFee / daySpan;
+                }
+            }
+            return { totalFee, todayFee, avgFeeDay, hasTrades: hist.length > 0 };
+        }
+
+        function updateTradingFeeCard(data) {
+            const pairs = [
+                ['tradingFeeVal', 'tradingFeeSub'],
+                ['exTradingFeeVal', 'exTradingFeeSub'],
+            ];
+            const { totalFee, todayFee, avgFeeDay, hasTrades } = computeTradingFeeStats(data);
+            const acct = data.pnl_summary && data.pnl_summary.account;
+            const waitingLive = data.live_mode && !acct;
+            const source = data.live_mode ? 'Binance COMMISSION' : 'Bot history';
+
+            for (const [valId, subId] of pairs) {
+                const valEl = document.getElementById(valId);
+                const subEl = document.getElementById(subId);
+                if (!valEl) continue;
+
+                if (waitingLive) {
+                    valEl.innerText = '—';
+                    valEl.className = 'value';
+                    if (subEl) subEl.innerText = 'Waiting for Binance income…';
+                    continue;
+                }
+
+                const hasFeeData = totalFee > 0.000001 || todayFee > 0.000001 || avgFeeDay != null;
+                if (!hasFeeData && !hasTrades) {
+                    valEl.innerText = '—';
+                    valEl.className = 'value';
+                    if (subEl) {
+                        subEl.innerText = data.live_mode
+                            ? 'No commission yet · Binance COMMISSION'
+                            : 'No fees in bot history';
+                    }
+                    continue;
+                }
+
+                const mainVal = todayFee > 0.000001
+                    ? todayFee
+                    : (avgFeeDay != null ? avgFeeDay : totalFee);
+                valEl.innerText = formatMoney(mainVal);
+                valEl.className = 'value ' + (mainVal > 0.000001 ? 'red' : '');
+
+                const parts = [];
+                if (todayFee > 0.000001 && mainVal !== todayFee) {
+                    parts.push(`Today ${formatMoney(todayFee)}`);
+                }
+                if (avgFeeDay != null) {
+                    parts.push(`Avg ${formatMoney(avgFeeDay)}/day`);
+                }
+                if (totalFee > 0.000001) {
+                    parts.push(`All-time ${formatMoney(totalFee)}`);
+                }
+                if (subEl) {
+                    subEl.innerText = parts.length ? `${parts.join(' · ')} · ${source}` : source;
+                }
+            }
+        }
+        const STRAT_TOP_RANK_COLORS = {
+            1: '#ffe066', 2: '#c0d4ff', 3: '#e8a87c', 4: '#7ee787', 5: '#d2a8ff',
+        };
+        function stratTotalPnlCellHtml(value, hasData, isSum, topRank) {
+            const pad = isSum ? '8px 10px' : '7px 10px';
+            if (!hasData) {
+                return `<td class="strat-total-pnl-col" style="text-align:right; padding:${pad}; font-weight:800; color:var(--text-muted);">—</td>`;
+            }
+            const totalCol = value >= 0 ? 'var(--up)' : 'var(--down)';
+            const style = topRank
+                ? `font-weight:900; color:${STRAT_TOP_RANK_COLORS[topRank]};`
+                : `font-weight:${isSum ? 900 : 800}; color:${totalCol};`;
+            const text = (value >= 0 ? '+' : '') + formatMoney(value);
+            return `<td class="strat-total-pnl-col" style="text-align:right; padding:${pad}; ${style}">${text}</td>`;
+        }
+        function buildPnlChartView(data, summary, tabFilter) {
+            const strat = tabFilter === 'All'
+                ? (summary.strategy || summary.all || {})
+                : ((summary.per_tab || {})[tabFilter] || {});
+            const stratReal = Number(strat.realized || 0);
+            const stratUnreal = Number(strat.unrealized || 0);
+            const stratTotal = Number(strat.total ?? (stratReal + stratUnreal));
+            const account = summary.account;
+            const showDual = !!(data.live_mode && tabFilter === 'All' && account);
+            if (showDual) {
+                const acctUnreal = Number(account.unrealized || 0);
+                return { chartTotal: stratTotal, unrealized: acctUnreal, hasOpenPnl: Math.abs(acctUnreal) > 0.000001 };
+            }
+            return { chartTotal: stratTotal, unrealized: stratUnreal, hasOpenPnl: Math.abs(stratUnreal) > 0.000001 };
+        }
+
+        // ── Authentication ──────────────────────────────────────────────────
+        let _passcode = sessionStorage.getItem('passcode') || '';
+
+        function doLogin() {
+            const p = document.getElementById('passcodeInput').value.trim();
+            sessionStorage.setItem('passcode', p);
+            _passcode = p;
+            initApp();
+        }
+
+        function showLogin() {
+            document.getElementById('loginOverlay').style.display = 'flex';
+            setTimeout(() => document.getElementById('passcodeInput').focus(), 50);
+        }
+
+        function authHeaders() {
+            return _passcode ? { 'X-Passcode': _passcode } : {};
+        }
+
+        // ── WebSocket ───────────────────────────────────────────────────────
+        const IS_MOBILE_LITE = window.IS_MOBILE_LITE === true;
+        if (IS_MOBILE_LITE) document.body.classList.add('mobile-lite');
+        const LOG_POLL_MS = IS_MOBILE_LITE ? 60000 : 3000;
+        const WS_FULL_CACHE_KEYS = [
+            'recent_history', 'stats_trade_history', 'equity_close_series',
+            'binance_recent_history', 'recent_history_source',
+            'margin_history', 'equity_snapshots', 'symbol_leaderboard',
+            'tab_stats', 'stats_meta', 'binance_api_trades', 'sltp_mode', 'local_sltp',
+            'order_env', 'api_account_type', 'price_feed_env', 'equity_margin_baseline',
+            'binance_income', 'tab_enabled', 'long_short_balance_mode', 'trade_side_mode',
+            'max_positions_per_tab', 'margin_size', 'leverage', 'notional_size',
+            'symbol_scan_limit', 'symbol_scan_limit_by_tab', 'symbol_scan_count',
+            'symbol_filter_by_tab', 'symbol_allowlist_by_tab', 'symbol_blocklist_by_tab',
+            'tab_timeframes', 'daily_profit_30d', 'daily_loss_usd',
+        ];
+        let wsPayloadCache = {};
+        let logPollTimer = null;
+        let ws = null;
+        let wsReconnectTimer = null;
+        let wsWatchdogTimer = null;
+        let wsConnecting = false;
+        let lastWsMessageAt = 0;
+        const WS_RECONNECT_MS = 3000;
+        const WS_STALE_MS = IS_MOBILE_LITE ? 90000 : 15000;
+        function isWsFullPayload(data) {
+            return !IS_MOBILE_LITE || (data && data._tier === 'full');
+        }
+
+        function mergeWsPayload(data) {
+            if (data && data._tier === 'full') {
+                for (const key of WS_FULL_CACHE_KEYS) {
+                    if (key in data) wsPayloadCache[key] = data[key];
+                }
+            }
+            return Object.assign({}, wsPayloadCache, data);
+        }
+
+        function wsQueryString() {
+            const parts = [];
+            if (_passcode) parts.push('token=' + encodeURIComponent(_passcode));
+            if (IS_MOBILE_LITE) parts.push('lite=1');
+            return parts.length ? '?' + parts.join('&') : '';
+        }
+
+        function titleMarginSuffix(data) {
+            if (!data || !data.live_mode || !data.exchange_account) return '';
+            const mb = Number(data.exchange_account.marginBalance ?? data.exchange_account.walletBalance);
+            if (!Number.isFinite(mb)) return '';
+            return ` · ${formatMoney(mb)}`;
+        }
+
+        function titleEthSuffix(data) {
+            const prices = (data && data.market_prices) || {};
+            let eth = Number(prices.ETHUSDT);
+            if (!Number.isFinite(eth) || eth <= 0) {
+                eth = Number(lastMarketPrices.ETHUSDT);
+            }
+            if (!Number.isFinite(eth) || eth <= 0) return '';
+            return ` · ETH ${formatMarketPrice(eth)}`;
+        }
+
+        function updateDocumentTitle(data) {
+            if (!data) {
+                document.title = '·';
+                return;
+            }
+            const mbSuffix = titleMarginSuffix(data);
+            const ethSuffix = titleEthSuffix(data);
+            if (data.circuit_breaker) {
+                document.title = `HALT${mbSuffix}${ethSuffix} ·`;
+                return;
+            }
+            const apiBan = data.binance_rate_limit || (data.health || {}).binance_rate_limit || {};
+            if (apiBan.active) {
+                document.title = `API BAN${mbSuffix}${ethSuffix} ·`;
+                return;
+            }
+            const mode = !data.live_mode
+                ? 'PAPER'
+                : (data.testnet ? 'TESTNET' : 'LIVE');
+            document.title = `${mode}${mbSuffix}${ethSuffix} ·`;
+        }
+        let lastPrices = {};
+        let lastMarketPrices = { BTCUSDT: null, ETHUSDT: null, XAUUSDT: null, CLUSDT: null };
+        const _marketTickTimers = {};
+        let activeTabFilter = 'All';
+        let previousSyncIssueCount = 0;
+        let acknowledgedSyncIssueCount = Number(
+            window.localStorage.getItem('acknowledgedSyncIssueCount') || '0'
+        );
+        
+        const strategyDescriptions = {
+            'All': '💡 <strong>Portfolio Overview:</strong> รวมผลประกอบการและสถิติการเทรดของทุก Strategy',
+            'Tab1': '🎯 <strong>EMA Pullback 110/190</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow</span><br/>สวิงเทรดระยะกลาง รอแนวโน้มชัดเจน (EMA110 &gt; EMA190) แล้วดักซื้อตอนราคาย่อกลับ Retest EMA110 พร้อม Pullback buffer 0.3% แท่งเทียนต้องปิดเหนือ EMA110 และเป็นแท่งเขียว (Long) / ต่ำกว่า EMA110 แท่งแดง (Short)<br/><i>*SL = low ของ 2 แท่งล่าสุด (cap 8.5%), TP = Entry + 4×Risk (RR 1:4), Invalidation: ราคาปิดทะลุ EMA110, Max 10 ไม้</i>',
+            'Tab2': '📐 <strong>EMA6/EMA35 Crossover + ATR</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum</span><br/>จับจังหวะที่ EMA6 ตัด EMA35 ขึ้น (Long) หรือตัดลง (Short) บนแท่งปิดล่าสุด เข้าออเดอร์ที่ Open แท่งถัดไป SL/TP คำนวณจาก ATR(14): SL=2.1×ATR, TP=3.78×ATR (RR 1:1.8)<br/><i>*EMA fast=6, EMA slow=35, ATR=14, ไม่มี Invalidation — exit ด้วย SL/TP เท่านั้น, Max 10 ไม้</i>',
+            'Tab3': '🏦 <strong>SMC Order Block EMA260</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow</span><br/>Smart Money 2-Phase: Phase 1 สแกนหา BOS (Break of Swing High/Low + ATR displacement 0.45×ATR) ภายใน 4 แท่ง ขณะที่ราคาอยู่เหนือ/ต่ำ EMA260 → Phase 2 แท่งล่าสุดปิดใน Order Block (OB Lookback 7 แท่ง) พร้อม Confirmation<br/><i>*Pivot L/R=3, BOS margin=0.135%, ATR disp=0.45×ATR, OB Lookback=7, Expiry=4 bars, RR 1:3.75, CHoCH Exit, Max 10 ไม้</i>',
+            'Tab4': '🎰 <strong>Premium/Discount OTE EMA240</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow (pullback)</span><br/>SMC + ICT Optimal Trade Entry: Phase 1 สแกนหา BOS เหมือน Tab3 (ไม่ต้องการ ATR filter) ภายใน 5 แท่ง → Phase 2 รอราคา Retrace เข้าโซน OTE Fibonacci 66–72% (Premium/Discount Zone) พร้อม Confirmation Candle ใช้ EMA240 เป็น Trend Filter<br/><i>*Pivot L/R=3, BOS margin=0.125%, Expiry=5 bars, OTE 66–72% fib, RR 1:3.75, CHoCH Exit, ไม่ต้องการ Order Block, Max 10 ไม้</i>',
+            'Tab5': '📉 <strong>RSI Divergence 1H Balance</strong> (Timeframe: <b>1H</b>) · <span style="color:#f85149">🔴 Reversal</span><br/>ตรวจจับ RSI(2) Divergence บน Pivot High/Low (Left=3, Right=3): Bullish Divergence (ราคา Lower Low + RSI Higher Low) → Long, Bearish Divergence (ราคา Higher High + RSI Lower High) → Short เข้าที่ Open แท่งถัดไปหลัง Pivot Confirmed<br/><i>*SL=1.7×ATR(14), TP=6.12×ATR(14), RR 1:3.6, Max Hold 48 bars (2 วัน), Exit: SL/TP/Opposite Divergence/Max Hold</i>',
+            'Tab6': '🔥 <strong>BB/KC Squeeze Breakout 4H Opt</strong> (Timeframe: <b>4H</b>) · <span style="color:#d29922">🟡 Sideway → Breakout</span><br/>ตรวจจับ Volatility Squeeze เมื่อ Bollinger Bands (30, 1.3) หดตัวอยู่ภายใน Keltner Channel (EMA20 ± SMA_TR20×1.6) — Signal fires เมื่อ squeeze ปล่อยและราคาปิดทะลุ KC_upper/KC_lower (Transition only: first bar only)<br/><i>*Entry = Open±0.02%, SL = min(2.0×ATR14, 7.5% of entry), TP = SL×1.5 (RR 1:1.5), Exit: SL/TP/Opposite Signal, Max 30 ไม้</i>',
+            'Tab7': '🌊 <strong>CCI 125 OPT 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#f85149">🔴 Reversal (mean-reversion)</span><br/>Momentum crossover strategy: คำนวณ CCI(30) บนแท่ง 4H — Long เมื่อ CCI ตัดขึ้นผ่าน +125 (prev ≤ +125, curr &gt; +125), Short เมื่อ CCI ตัดลงผ่าน −125 (prev ≥ −125, curr &lt; −125) เข้าออเดอร์ที่ Open แท่ง 4H ถัดไป<br/><i>*Risk = min(ATR(14)×2.1, Entry×5%), SL = Entry∓Risk, TP = Entry±Risk×1.75 (RR 1:1.75), Exit: SL/TP/Opposite CCI Crossover, 1 position per symbol, Max 20 ไม้</i>',
+            'Tab8': '⚔️ <strong>Three Soldiers / Three Crows 1H Combo Stable Opt</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum (pattern+trend+breakout)</span><br/>Candlestick pattern 3 แท่งต่อเนื่อง + trend filter EMA200 + quality filter ADX/Volume/EMA distance + breakout confirm. Long = Three White Soldiers (3 เขียวติด body≥40%, close HH, close>EMA200, ADX≥20, vol/SMA20≥1, breakout &gt; max(high[-2],high[-1])×1.001). Short = Three Black Crows (mirror). Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×2.5, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.75 (RR 1:1.75), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab9': '⚡ <strong>PA Impulse Move Continuation 1H Best</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Continuation</span><br/>Price-action impulse continuation: วัด net move จาก close[i-3] ถึง close[i] ต้องแรงอย่างน้อย 1.8×ATR(14), พร้อม close ต่อเนื่องไปทางเดียวกัน 3 แท่งล่าสุด และใช้ EMA200 เป็น trend filter. Long เมื่อ close เรียงขึ้นและอยู่เหนือ EMA200, Short เมื่อ close เรียงลงและอยู่ต่ำกว่า EMA200. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.75, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.25 (RR 1:1.25), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab10': '📈 <strong>Volume Range Expansion Spike 1H</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Expansion</span><br/>จับแท่ง impulse ที่ range ขยายและ volume spike: signal candle ต้องมี range ≥ 0.9×ATR(14), volume ≥ SMA20(volume)×1.4, body ratio ≥ 50%, และใช้ EMA150 เป็น trend filter. Long เมื่อแท่งเขียวปิดเหนือ EMA150, Short เมื่อแท่งแดงปิดต่ำกว่า EMA150. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.5, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+        };
+
+        Object.assign(strategyDescriptions, {
+            'Tab1': '🎯 <strong>EMA Pullback 110/190</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow</span><br/>ใช้ EMA110/EMA190 เป็น trend filter. Long เมื่อ EMA110 &gt; EMA190 แล้วแท่ง signal ย่อแตะโซน EMA110, ปิดเหนือ EMA110 และเป็นแท่งเขียว. Short เมื่อ EMA110 &lt; EMA190 แล้วแท่ง signal เด้งแตะโซน EMA110, ปิดต่ำกว่า EMA110 และเป็นแท่งแดง. Entry = open แท่งถัดไป<br/><i>*SL = structure stop จาก low/high ของ signal candle เทียบกับ EMA110 buffer 0.2%, cap ด้วย global 8.5%, TP = 4×Risk (RR 1:4), Invalidation: close หลุด EMA110 buffer, Max 30 ไม้</i>',
+            'Tab2': '📐 <strong>EMA6/EMA35 Crossover + ATR</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum</span><br/>จับ EMA6 cross EMA35 บนแท่งปิดล่าสุด. Long เมื่อ EMA6 ตัดขึ้นเหนือ EMA35, Short เมื่อ EMA6 ตัดลงใต้ EMA35. Entry = open แท่งถัดไป<br/><i>*SL = 2.1×ATR(14) capped by global 8.5%, TP = 1.8×Risk (เดิม 3.78×ATR ก่อน cap), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab3': '🏦 <strong>SMC Order Block EMA260</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow</span><br/>Smart Money 2-phase: Phase 1 หา BOS ภายใน 4 แท่งด้วย pivot L/R=3, trend filter EMA260, breakout margin 0.135% และ displacement filter range ≥ 0.45×ATR. Phase 2 แท่งล่าสุด retest Order Block จาก OB lookback 7 แท่ง และยืนยันด้วยแท่งเขียว/แดงตามทิศทาง<br/><i>*SL = OB opposite edge ± risk buffer 0.03%, TP = 3.75×Risk, Invalidation: CHoCH swing level, Max 30 ไม้</i>',
+            'Tab4': '🎰 <strong>Premium/Discount OTE EMA240</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Trend-follow Pullback</span><br/>SMC + ICT OTE 2-phase: Phase 1 หา BOS ภายใน 5 แท่งด้วย pivot L/R=3, trend filter EMA240 และ breakout margin 0.125%. Phase 2 รอราคา retrace เข้าโซน OTE Fibonacci 66–72% พร้อม confirmation candle<br/><i>*SL = swing extreme ± risk buffer 0.03%, TP = 3.75×Risk, Invalidation: CHoCH swing level, Max 30 ไม้</i>',
+            'Tab5': '📉 <strong>RSI Divergence 1H Balance</strong> (Timeframe: <b>1H</b>) · <span style="color:#f85149">🔴 Reversal</span><br/>ตรวจจับ RSI(2) divergence ด้วย pivot L/R=3. Long เมื่อราคาเกิด lower low แต่ RSI ทำ higher low. Short เมื่อราคาเกิด higher high แต่ RSI ทำ lower high. Entry = open แท่งถัดไปหลัง pivot confirmed<br/><i>*SL = 1.7×ATR(14) capped by global 8.5%, TP = 3.6×Risk, Exit: SL/TP/Opposite Divergence/Max Hold 48 bars = 48 ชม. (2 วัน), Max 30 ไม้</i>',
+            'Tab6': '🔥 <strong>BB/KC Squeeze Breakout 4H Opt</strong> (Timeframe: <b>4H</b>) · <span style="color:#d29922">🟡 Sideway → Breakout</span><br/>ตรวจจับ volatility squeeze เมื่อ Bollinger Bands(30, 1.3) อยู่ภายใน Keltner Channel EMA20 ± SMA(TR,20)×1.6. Signal fires เฉพาะตอน squeeze transition แล้วราคาปิดทะลุ channel ตามทิศทาง. Entry = open แท่งถัดไป ±0.02%<br/><i>*Risk = min(ATR(14)×2.0, Entry×7.5%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP/Opposite Signal, Max 20 ไม้</i>',
+            'Tab7': '🌊 <strong>CCI 125 OPT 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum Crossover</span><br/>ใช้ CCI(30) threshold ±125. Long เมื่อ CCI ตัดขึ้นผ่าน +125 บนแท่งปิดล่าสุด. Short เมื่อ CCI ตัดลงผ่าน −125 บนแท่งปิดล่าสุด. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×2.1, Entry×5%), SL = Entry∓Risk, TP = Entry±Risk×1.75 (RR 1:1.75), Exit: SL/TP/Opposite CCI signal, Max 20 ไม้</i>',
+            'Tab8': '⚔️ <strong>Three Soldiers / Three Crows 1H Combo Stable Opt</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum (Pattern + Trend + Breakout)</span><br/>Candlestick pattern 3 แท่งต่อเนื่องพร้อม EMA200, ADX, volume และ breakout filter. Long = 3 bullish candles body ratio ≥40%, close เรียงขึ้น, close &gt; EMA200, ADX14 ≥20, volume/SMA20 ≥1 และ close breakout เหนือ high ของ 2 แท่งก่อนหน้า 0.1%. Short = mirror เงื่อนไขลง<br/><i>*Risk = min(ATR(14)×2.5, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.75 (RR 1:1.75), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab9': '⚡ <strong>PA Impulse Move Continuation 1H Best</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Continuation</span><br/>Price-action impulse continuation: net move จาก close[i-3] ถึง close[i] ต้องแรงอย่างน้อย 1.8×ATR(14), close 3 แท่งล่าสุดเรียงไปทางเดียวกัน และใช้ EMA200 เป็น trend filter. Long เมื่อ close เรียงขึ้นและอยู่เหนือ EMA200, Short เมื่อ close เรียงลงและอยู่ต่ำกว่า EMA200. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.75, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.25 (RR 1:1.25), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab10': '📈 <strong>Volume Range Expansion Spike 1H</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Expansion</span><br/>จับแท่ง impulse ที่ range ขยายและ volume spike: signal candle ต้องมี range ≥ 0.9×ATR(14), volume ≥ SMA20(volume)×1.4, body ratio ≥50%, และใช้ EMA150 เป็น trend filter. Long เมื่อแท่งเขียวปิดเหนือ EMA150, Short เมื่อแท่งแดงปิดต่ำกว่า EMA150. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.5, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP เท่านั้นใน live bot, Max 30 ไม้</i>',
+            'Tab11': '🧭 <strong>Volume Pressure Proxy 1H</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>ใช้ buy-pressure proxy จาก volume ของแท่งเขียวใน window 8 แท่ง: up volume ratio = volume แท่งเขียวรวม / volume รวม. Long เมื่อ ratio ≥ 0.55, close breakout เหนือ high ของ 3 แท่งก่อนหน้า และ close &gt; EMA50. Short เมื่อ ratio ≤ 0.42, close breakout ต่ำกว่า low ของ 3 แท่งก่อนหน้า และ close &lt; EMA50. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×2.0, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.25 (RR 1:1.25), Exit: SL/TP เท่านั้นใน live bot, Max 50 ไม้</i>',
+            'Tab12': '🚀 <strong>Volume Spike Breakout 1H</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>จับ volume spike พร้อม breakout: volume ≥ SMA20(volume)×1.7, Long เมื่อ close breakout เหนือ high ของ 3 แท่งก่อนหน้า ×1.001 และอยู่เหนือ EMA150, Short เมื่อ close breakdown ต่ำกว่า low ของ 3 แท่งก่อนหน้า ×0.999 และอยู่ต่ำกว่า EMA150. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.75, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP เท่านั้นใน live bot, Testnet ใช้ local TP/SL, Max 30 ไม้</i>',
+            'Tab13': '⚡ <strong>PA Impulse Move Continuation 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Continuation</span><br/>ใช้ logic เดียวกับ Tab9 แต่ประเมินจากแท่ง 4H: net move จาก close[i-3] ถึง close[i] ต้องแรงอย่างน้อย 1.8×ATR(14), close 3 แท่งล่าสุดเรียงไปทางเดียวกัน และใช้ EMA200 เป็น trend filter. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.75, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.25 (RR 1:1.25), Exit: SL/TP เท่านั้น, Max 30 ไม้</i>',
+            'Tab14': '📈 <strong>Volume Range Expansion Spike 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Expansion</span><br/>ใช้ logic เดียวกับ Tab10 แต่ประเมินจากแท่ง 4H: range ≥ 0.9×ATR(14), volume ≥ SMA20(volume)×1.4, body ratio ≥50%, และใช้ EMA150 เป็น trend filter. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.5, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP เท่านั้นใน live bot, Max 30 ไม้</i>',
+            'Tab15': '🧭 <strong>Volume Pressure Proxy 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>ใช้ logic เดียวกับ Tab11 แต่ประเมินจากแท่ง 4H: up volume ratio จาก window 8 แท่ง, breakout เหนือ/ต่ำกว่า 3 แท่งก่อนหน้า และ EMA50 trend filter. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×2.0, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.25 (RR 1:1.25), Exit: SL/TP เท่านั้นใน live bot, Max 30 ไม้</i>',
+            'Tab16': '🚀 <strong>Volume Spike Breakout 4H</strong> (Timeframe: <b>4H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>ใช้ logic เดียวกับ Tab12 แต่ประเมินจากแท่ง 4H: volume ≥ SMA20(volume)×1.7 พร้อม breakout/breakdown 3 แท่งก่อนหน้า และ EMA150 trend filter. Entry = open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.75, Entry×7%), SL = Entry∓Risk, TP = Entry±Risk×1.5 (RR 1:1.5), Exit: SL/TP เท่านั้นใน live bot, Max 30 ไม้</i>',
+            'Tab17': '🧲 <strong>Momentum Vol Pressure 1H</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>ใช้ logic เดียวกับ Tab11 (Volume Pressure Proxy) แต่สแกนเฉพาะ Momentum universe: เหรียญที่ |price change| 24h ≥ 2.5% และ volume spike ≥ 1.25× SMA20 จากนั้นเลือก top 50 ตาม momentum score = |Δ%| × min(vol_ratio, 3.0). Priority scan เปิด position จากเหรียญ momentum สูงสุดก่อนเมื่อมีหลายสัญญาณพร้อมกัน<br/><i>*Signal = Tab11 (up-vol ratio + breakout + EMA50). Risk = min(ATR(14)×2.0, Entry×7%), TP = 1.25R, Uses Top 500 base universe, Max 40 ไม้</i>',
+            'Tab18': '📊 <strong>Vol ultimate</strong> (Timeframe: <b>1H</b>) · <span style="color:#3fb950">🟢 Momentum / Breakout</span><br/>Buy-pressure ratio = sum(green-candle volume) / sum(total volume) ใน 8 แท่ง · Long: ratio ≥ 0.585 + close breakout เหนือ HH 3 แท่งก่อนสัญญาณ + close &gt; EMA40 · Short: ratio ≤ 0.428 + close breakout ต่ำกว่า LL 3 แท่ง + close &lt; EMA40 · Entry ที่ open แท่งถัดไป<br/><i>*Risk = min(ATR(14)×1.8875, Entry×7%), TP = 0.85R, Exit SL/TP only</i>',
+        });
+        
+        // Tab Filtering Function
+        function setFilter(tabName) {
+            activeTabFilter = tabName;
+            historyPageOffset = 0;
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.filter === tabName);
+            });
+            
+            document.getElementById('strategy-desc').innerHTML = strategyDescriptions[tabName] || strategyDescriptions['All'];
+            
+            // Force re-render of current state
+            if(window.lastDataPayload) updateDashboard(window.lastDataPayload);
+            loadHistoryPage();
+        }
+        
+        function initApp() {
+            document.getElementById('loginOverlay').style.display = 'none';
+            document.getElementById('loginError').innerText = '';
+            renderHideInactiveToggle();
+            if (wsConnecting) return;
+            wsConnecting = true;
+            if (wsReconnectTimer) {
+                clearTimeout(wsReconnectTimer);
+                wsReconnectTimer = null;
+            }
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws${wsQueryString()}`;
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                ws.onclose = null;
+                ws.close();
+            }
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                wsConnecting = false;
+                lastWsMessageAt = Date.now();
+                updateDocumentTitle(window.lastDataPayload || null);
+                startWsWatchdog();
+                document.getElementById('loginOverlay').style.display = 'none';
+                const t = document.getElementById('wsStatusText');
+                const b = document.getElementById('wsStatusBall');
+                const bx = document.getElementById('wsStatusBox');
+                if(t) { t.innerText = 'WS Connected'; t.style.color = 'var(--up)'; }
+                if(b) { b.style.backgroundColor = 'var(--up)'; b.style.boxShadow = '0 0 10px var(--up)'; }
+                if(bx) { bx.style.borderLeftColor = 'var(--up)'; }
+                loadHistoryPage();
+            };
+
+            ws.onclose = (e) => {
+                wsConnecting = false;
+                updateDocumentTitle(null);
+                const t = document.getElementById('wsStatusText');
+                const b = document.getElementById('wsStatusBall');
+                const bx = document.getElementById('wsStatusBox');
+                if(t) { t.innerText = 'WS Disconnected'; t.style.color = 'var(--down)'; }
+                if(b) { b.style.backgroundColor = 'var(--down)'; b.style.boxShadow = '0 0 10px var(--down)'; }
+                if(bx) { bx.style.borderLeftColor = 'var(--down)'; }
+                // 4001 = wrong passcode
+                if (e.code === 4001) {
+                    sessionStorage.removeItem('passcode');
+                    _passcode = '';
+                    document.getElementById('loginError').innerText = 'Wrong passcode.';
+                    showLogin();
+                } else {
+                    scheduleWsReconnect(); // auto-reconnect
+                }
+            };
+
+            ws.onerror = () => {
+                if (ws && ws.readyState !== WebSocket.CLOSED) {
+                    ws.close();
+                }
+            };
+
+            ws.onmessage = (event) => {
+                lastWsMessageAt = Date.now();
+                try {
+                    const data = mergeWsPayload(JSON.parse(event.data));
+                    data._fromWS = true;
+                    window.lastDataPayload = data;
+                    updateDashboard(data);
+                } catch (err) {
+                    console.error('Dashboard WS render failed', err);
+                    showToast(`Dashboard render error: ${err.message || err}`, 'Dashboard');
+                }
+            };
+        }
+
+        function scheduleWsReconnect(delay = WS_RECONNECT_MS) {
+            if (wsReconnectTimer || wsConnecting) return;
+            wsReconnectTimer = setTimeout(() => {
+                wsReconnectTimer = null;
+                initApp();
+            }, delay);
+        }
+
+        function startWsWatchdog() {
+            if (wsWatchdogTimer) return;
+            wsWatchdogTimer = setInterval(() => {
+                if (document.hidden) return;
+                if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                    scheduleWsReconnect(500);
+                    return;
+                }
+                if (ws.readyState === WebSocket.OPEN && lastWsMessageAt && Date.now() - lastWsMessageAt > WS_STALE_MS) {
+                    updateDocumentTitle(null);
+                    const t = document.getElementById('wsStatusText');
+                    const b = document.getElementById('wsStatusBall');
+                    const bx = document.getElementById('wsStatusBox');
+                    if(t) { t.innerText = 'WS Stale - reconnecting'; t.style.color = 'var(--warn)'; }
+                    if(b) { b.style.backgroundColor = 'var(--warn)'; b.style.boxShadow = '0 0 10px var(--warn)'; }
+                    if(bx) { bx.style.borderLeftColor = 'var(--warn)'; }
+                    ws.close();
+                    scheduleWsReconnect(500);
+                }
+            }, 5000);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (IS_MOBILE_LITE) {
+                if (document.hidden) {
+                    stopLogPolling();
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.onclose = null;
+                        ws.close();
+                    }
+                    return;
+                }
+                startLogPolling();
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    scheduleWsReconnect(250);
+                }
+            }
+            if (!document.hidden) {
+                const stale = !lastWsMessageAt || Date.now() - lastWsMessageAt > 5000;
+                if (!ws || ws.readyState !== WebSocket.OPEN || stale) {
+                    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+                    scheduleWsReconnect(250);
+                }
+                if (window.lastDataPayload) updateDashboard(window.lastDataPayload);
+            }
+        });
+
+        (function initLiteBadge() {
+            const liteBadge = document.getElementById('liteBadge');
+            if (!liteBadge) return;
+            const isMobileViewport = window.matchMedia('(max-width: 820px)').matches;
+            const isMobileUA = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+            const onMobile = isMobileViewport || isMobileUA;
+            if (!onMobile) {
+                liteBadge.style.display = 'none';
+                return;
+            }
+            liteBadge.textContent = IS_MOBILE_LITE ? 'Lite' : 'Full';
+            liteBadge.classList.toggle('full-mode', !IS_MOBILE_LITE);
+            liteBadge.title = IS_MOBILE_LITE
+                ? 'Mobile lite — 8s refresh, no charts. Tap for full mode.'
+                : 'Full mode — tap for mobile lite.';
+            liteBadge.style.cursor = 'pointer';
+            liteBadge.addEventListener('click', () => {
+                localStorage.setItem('dashboard_lite', IS_MOBILE_LITE ? '0' : '1');
+                location.reload();
+            });
+        })();
+
+        // Start without passcode. If the server requires one, it closes with 4001
+        // and the login overlay appears then.
+        initHistoryPager();
+        initApp();
+
+        let previousTradeCount = 0;
+        let previousPosCount = 0;
+        
+        let equityChart = null;
+        let dailyProfitChart = null;
+        let dailyProfit30dCache = null;
+
+        if (!IS_MOBILE_LITE) {
+        // Chart Initialization
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(102, 252, 241, 0.4)');
+        gradient.addColorStop(1, 'rgba(102, 252, 241, 0)');
+        
+        equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Strategy PnL',
+                    data: [],
+                    borderColor: '#58a6ff',
+                    backgroundColor: gradient,
+                    borderWidth: 1.5,
+                    fill: 'origin',
+                    tension: 0.2,
+                    spanGaps: false,
+                    pointRadius: 0,
+                    pointHoverRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => {
+                                const idx = items[0]?.dataIndex;
+                                const sym = equityChart._symbolLabels?.[idx] || '';
+                                const lbl = items[0]?.label || '';
+                                return sym ? [sym, lbl] : lbl;
+                            },
+                            label: (item) => {
+                                const lbl = item.dataset.label || '';
+                                const value = Number(item.parsed.y);
+                                if (!Number.isFinite(value)) return '';
+                                return ` ${lbl}: $${value.toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            color: '#555',
+                            maxTicksLimit: 8,
+                            maxRotation: 0,
+                            autoSkip: true,
+                            font: { size: 10 }
+                        },
+                        grid: { display: false }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#888' }
+                    }
+                },
+                interaction: { intersect: false, mode: 'index' }
+            }
+        });
+
+        const dailyProfitCanvas = document.getElementById('dailyProfitChart');
+        dailyProfitChart = dailyProfitCanvas ? new Chart(dailyProfitCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Daily Net',
+                    data: [],
+                    backgroundColor: [],
+                    borderColor: [],
+                    borderWidth: 0,
+                    borderRadius: 3,
+                    maxBarThickness: 18,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => {
+                                const idx = items[0]?.dataIndex;
+                                const row = dailyProfitChart._dailySeries?.[idx];
+                                return row?.date_utc || items[0]?.label || '';
+                            },
+                            label: (item) => {
+                                const idx = item.dataIndex;
+                                const row = dailyProfitChart._dailySeries?.[idx] || {};
+                                const net = Number(row.net || 0);
+                                const lines = [`Net: ${net >= 0 ? '+' : ''}$${net.toFixed(2)}`];
+                                if (row.realized_pnl != null) {
+                                    lines.push(`Realized: $${Number(row.realized_pnl).toFixed(2)}`);
+                                    lines.push(`Fee: $${Number(row.commission).toFixed(2)}`);
+                                    lines.push(`Funding: $${Number(row.funding).toFixed(2)}`);
+                                }
+                                return lines;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: {
+                            color: '#555',
+                            maxTicksLimit: 10,
+                            maxRotation: 0,
+                            autoSkip: true,
+                            font: { size: 10 },
+                        },
+                        grid: { display: false },
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: {
+                            color: '#888',
+                            callback: (v) => '$' + Number(v).toFixed(0),
+                        },
+                    },
+                },
+            },
+        }) : null;
+        }
+
+        function renderDailyProfit30dChart(series) {
+            if (!dailyProfitChart || !Array.isArray(series) || !series.length) return;
+            const todayKey = series[series.length - 1]?.date_utc;
+            const labels = series.map((p) => (p.date_utc || '').slice(5));
+            const values = series.map((p) => Number(p.net || 0));
+            const bg = values.map((v) =>
+                v > 0.000001 ? 'rgba(63,185,80,0.78)'
+                : v < -0.000001 ? 'rgba(248,81,73,0.78)'
+                : 'rgba(139,148,158,0.42)');
+            const borders = series.map((p) =>
+                p.date_utc === todayKey ? 'rgba(102,252,241,0.95)' : 'transparent');
+            const borderWidths = series.map((p) => (p.date_utc === todayKey ? 2 : 0));
+            dailyProfitChart.data.labels = labels;
+            const ds = dailyProfitChart.data.datasets[0];
+            ds.data = values;
+            ds.backgroundColor = bg;
+            ds.borderColor = borders;
+            ds.borderWidth = borderWidths;
+            dailyProfitChart._dailySeries = series;
+            dailyProfitChart.update('none');
+        }
+
+        function updateDailyProfit30dChart(series) {
+            if (IS_MOBILE_LITE) return;
+            const btn = document.getElementById('dailyProfit30dBtn');
+            if (!Array.isArray(series) || !series.length) {
+                dailyProfit30dCache = null;
+                if (btn) btn.style.display = 'none';
+                return;
+            }
+            dailyProfit30dCache = series;
+            if (btn) btn.style.display = 'inline-block';
+            renderDailyProfit30dChart(series);
+            const overlay = document.getElementById('dailyProfit30dOverlay');
+            if (overlay && overlay.style.display === 'flex') {
+                requestAnimationFrame(() => dailyProfitChart?.resize());
+            }
+        }
+
+        function openDailyProfit30dModal() {
+            if (!dailyProfit30dCache?.length) return;
+            const overlay = document.getElementById('dailyProfit30dOverlay');
+            if (!overlay) return;
+            renderDailyProfit30dChart(dailyProfit30dCache);
+            overlay.style.display = 'flex';
+            requestAnimationFrame(() => dailyProfitChart?.resize());
+        }
+
+        function closeDailyProfit30dModal() {
+            const overlay = document.getElementById('dailyProfit30dOverlay');
+            if (overlay) overlay.style.display = 'none';
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDailyProfit30dModal();
+        });
+
+        // Margin history is now server-side — persists across refresh
+        function buildMarginHistory(serverHistory) {
+            return {
+                labels: serverHistory.map(p => p.time),
+                data:   serverHistory.map(p => p.value),
+            };
+        }
+
+        // Toast Notification Function
+        function showToast(message, type = 'Trade') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.innerHTML = `<strong>${type}</strong><br>${message}`;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'fadeOut 0.3s ease forwards';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        // Critical error beep (dashboard only; requires one user click/key to unlock audio)
+        let _criticalBeepAudioCtx = null;
+        let _criticalBeepInitDone = false;
+        let _lastCriticalBeepKey = '';
+        let _lastCriticalBeepAt = 0;
+        const CRITICAL_BEEP_COOLDOWN_MS = 8000;
+
+        function ensureCriticalBeepAudio() {
+            if (!_criticalBeepAudioCtx) {
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return null;
+                _criticalBeepAudioCtx = new Ctx();
+            }
+            if (_criticalBeepAudioCtx.state === 'suspended') {
+                _criticalBeepAudioCtx.resume().catch(() => {});
+            }
+            return _criticalBeepAudioCtx;
+        }
+
+        document.addEventListener('click', ensureCriticalBeepAudio, { once: true });
+        document.addEventListener('keydown', ensureCriticalBeepAudio, { once: true });
+
+        function playCriticalBeep() {
+            const ctx = ensureCriticalBeepAudio();
+            if (!ctx) return;
+            const tone = (freq, start, duration, volume = 0.12) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+                gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + start + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + start);
+                osc.stop(ctx.currentTime + start + duration + 0.05);
+            };
+            tone(880, 0, 0.12);
+            tone(660, 0.18, 0.2);
+        }
+
+        const TP_BEEP_STORAGE_KEY = 'dashboard_tp_beep_enabled';
+        const TP_BEEP_COOLDOWN_MS = 2500;
+        let _knownHistoryKeys = new Set();
+        let _historyBeepInitDone = false;
+        let _lastTpBeepAt = 0;
+
+        function tpBeepEnabled() {
+            try {
+                return localStorage.getItem(TP_BEEP_STORAGE_KEY) !== 'false';
+            } catch {
+                return true;
+            }
+        }
+
+        function setTpBeepEnabled(on) {
+            try {
+                localStorage.setItem(TP_BEEP_STORAGE_KEY, on ? 'true' : 'false');
+            } catch { /* private mode / storage blocked */ }
+            renderTpBeepSwitch();
+            if (on) playTpBeep();
+        }
+
+        function toggleTpBeep() {
+            ensureCriticalBeepAudio();
+            setTpBeepEnabled(!tpBeepEnabled());
+        }
+
+        function renderTpBeepSwitch() {
+            const btn = document.getElementById('tpBeepToggleBtn');
+            if (!btn) return;
+            const on = tpBeepEnabled();
+            btn.textContent = on ? '🔔 TP Beep: ON' : '🔕 TP Beep: OFF';
+            btn.style.background = on ? 'rgba(63,185,80,0.18)' : 'rgba(48,54,61,0.42)';
+            btn.style.color = on ? 'var(--up)' : 'var(--text-dim)';
+            btn.style.borderColor = on ? 'rgba(63,185,80,0.45)' : 'var(--glass-border)';
+        }
+
+        function historyEntryKey(entry) {
+            return [
+                entry.exit_time || '',
+                entry.symbol || '',
+                entry.tab || '',
+                entry.reason || '',
+                entry.close_order_id || '',
+            ].join('|');
+        }
+
+        function isTpReason(reason) {
+            const r = String(reason || '').toUpperCase();
+            return r === 'TP' || r === 'TP_GAP' || r.startsWith('TP');
+        }
+
+        function playTpBeep() {
+            const ctx = ensureCriticalBeepAudio();
+            if (!ctx) return;
+            const tone = (freq, start, duration, volume = 0.14) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+                gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + start + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime + start);
+                osc.stop(ctx.currentTime + start + duration + 0.05);
+            };
+            tone(880, 0, 0.08);
+            tone(1175, 0.1, 0.12);
+            tone(1568, 0.22, 0.18);
+        }
+
+        function handleTpCloseBeep(data) {
+            try {
+                if (!data || !tpBeepEnabled()) return;
+
+                const hist = data.recent_history || [];
+                const nextKeys = new Set();
+                let hasNewTp = false;
+
+                for (const entry of hist) {
+                    if (!entry || typeof entry !== 'object') continue;
+                    const key = historyEntryKey(entry);
+                    nextKeys.add(key);
+                    if (
+                        _historyBeepInitDone
+                        && data._fromWS
+                        && !_knownHistoryKeys.has(key)
+                        && isTpReason(entry.reason)
+                    ) {
+                        hasNewTp = true;
+                    }
+                }
+
+                _knownHistoryKeys = nextKeys;
+                if (!_historyBeepInitDone) {
+                    _historyBeepInitDone = true;
+                    return;
+                }
+                if (!hasNewTp) return;
+                if (Date.now() - _lastTpBeepAt < TP_BEEP_COOLDOWN_MS) return;
+
+                _lastTpBeepAt = Date.now();
+                playTpBeep();
+            } catch (e) {
+                console.warn('TP beep handler:', e);
+            }
+        }
+
+        try { renderTpBeepSwitch(); } catch (e) { console.warn('TP beep switch init:', e); }
+
+        function criticalEventKey(ev) {
+            return `${ev.created_at || ''}|${ev.source || ''}|${String(ev.message || '').slice(0, 120)}`;
+        }
+
+        function handleCriticalErrorBeep(data) {
+            if (!data || !data.live_mode) return;
+
+            const health = data.health || {};
+            const events = [
+                ...(data.error_events || []),
+                ...(health.recent_errors || []),
+            ].filter(ev => String(ev.severity || '').toLowerCase() === 'critical');
+
+            if (!events.length) {
+                _criticalBeepInitDone = true;
+                return;
+            }
+
+            events.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+            const latest = events[events.length - 1];
+            const key = criticalEventKey(latest);
+
+            if (!_criticalBeepInitDone) {
+                _criticalBeepInitDone = true;
+                _lastCriticalBeepKey = key;
+                _lastCriticalBeepAt = Date.now();
+                return;
+            }
+
+            if (key === _lastCriticalBeepKey) return;
+            if (Date.now() - _lastCriticalBeepAt < CRITICAL_BEEP_COOLDOWN_MS) {
+                _lastCriticalBeepKey = key;
+                return;
+            }
+
+            _lastCriticalBeepKey = key;
+            _lastCriticalBeepAt = Date.now();
+            playCriticalBeep();
+            const msg = String(latest.message || 'Critical error detected').slice(0, 220);
+            showToast(msg, '🚨 Critical');
+        }
+
+        function tvLink(symbol) {
+            return `https://www.tradingview.com/chart/?symbol=BINANCE%3A${symbol}.P`;
+        }
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+        function normalizeIsoUtc(value) {
+            const raw = String(value || '');
+            if (!raw) return '';
+            return (raw.endsWith('Z') || raw.includes('+')) ? raw : raw + 'Z';
+        }
+        function symbolLink(symbol, extra = '') {
+            return `<a href="${tvLink(symbol)}" target="_blank" rel="noopener" style="color:var(--text-main);text-decoration:none;border-bottom:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-main)'">${symbol}${extra}</a>`;
+        }
+        function symbolLinkShort(symbol) {
+            let display = symbol.replace('USDT', '');
+            return `<a href="${tvLink(symbol)}" target="_blank" rel="noopener" style="color:var(--text-main);text-decoration:none;border-bottom:1px dashed #30363d;cursor:pointer;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-main)'">${display}</a>`;
+        }
+        function positionGroupKey(symbol, side) {
+            return `${symbol}__${side}`;
+        }
+        const STRATEGY_LABELS = {
+            'Tab1': 'EMA Pullback',
+            'Tab2': 'EMA6/35',
+            'Tab3': 'SMC OB',
+            'Tab4': 'OTE',
+            'Tab5': 'RSI Div',
+            'Tab6': 'Squeeze',
+            'Tab7': 'CCI 125',
+            'Tab8': '3 Soldiers/Crows',
+            'Tab9': 'PA Impulse',
+            'Tab10': 'Range',
+            'Tab11': 'Pressure',
+            'Tab12': 'Spike',
+            'Tab13': 'PA Impulse',
+            'Tab14': 'Range',
+            'Tab15': 'Pressure',
+            'Tab16': 'Spike',
+            'Tab17': 'Mom Vol Pressure',
+            'Tab18': 'Vol ultimate',
+            'SafeGuard': 'SafeGuard',
+            'Recovered': 'Recovered (unmatched)',
+        };
+        function strategyLabel(tab) {
+            return STRATEGY_LABELS[tab] || tab || '—';
+        }
+        function strategyDisplayLabel(tab) {
+            const name = strategyLabel(tab);
+            if (tab === 'SafeGuard') return name;
+            const m = /^Tab(\d+)$/.exec(String(tab || ''));
+            if (m) return `Tab ${m[1]}: ${name}`;
+            return name;
+        }
+        /** Compact label for Strategy Performance table (full name in title tooltip). */
+        function strategyTableLabel(tab) {
+            const name = strategyLabel(tab);
+            if (tab === 'SafeGuard' || tab === 'Recovered') return name;
+            const m = /^Tab(\d+)$/.exec(String(tab || ''));
+            if (m) return `T${m[1]} ${name}`;
+            return name;
+        }
+        const SLTP_MODE_DESCRIPTIONS = {
+            local: 'Bot manages SL and TP by mark price (no Binance algo orders).',
+            binance: 'STOP and TP algo orders on Binance (~200 cap on mainnet).',
+            hybrid: 'SL on Binance; TP managed locally by the bot.',
+            binance_fallback: 'Use Binance SL+TP when ≥2 algo slots free; otherwise local both.',
+        };
+        const SLTP_MODE_DESCRIPTIONS_TH = {
+            local: 'บอทจัดการ SL+TP ทั้งคู่ตาม mark price (ไม่ใช้ algo บน Binance)',
+            binance: 'วาง SL+TP algo บน Binance (mainnet ~200 ออเดอร์)',
+            hybrid: 'SL บน Binance / TP บอทจัดการเอง',
+            binance_fallback: 'ใช้ Binance เมื่อมี slot ≥2 ไม่งั้น local ทั้งคู่',
+        };
+
+        function expectedLocalProtection(pos, opts = {}) {
+            const slSrc = String(pos.sl_source || '').toLowerCase();
+            const tpSrc = String(pos.tp_source || '').toLowerCase();
+            if (slSrc === 'local' && tpSrc === 'local') return true;
+            const mode = String(pos.protection_mode || '').toLowerCase();
+            if (mode !== 'local') return false;
+            const reason = String(pos.protection_reason || '');
+            if (reason === 'mainnet_local_sl_tp' || reason === 'binance_fallback_local' || reason === 'testnet_local_policy') return true;
+            const pol = String(opts.sltp_mode || '').toLowerCase();
+            return pol === 'local' || pol === 'binance_fallback';
+        }
+
+        function protectionMeta(pos, liveMode = true, opts = {}) {
+            const status = String(pos.protection_status || '').toLowerCase();
+            const mode = String(pos.protection_mode || '').toLowerCase();
+            const slSrc = String(pos.sl_source || '').toLowerCase();
+            const tpSrc = String(pos.tp_source || '').toLowerCase();
+            const hasSl = !!pos.sl_order_id;
+            const hasTp = !!pos.tp_order_id;
+            if (!liveMode) {
+                return { label: 'PAPER', color: 'var(--text-dim)', level: 'neutral', detail: '' };
+            }
+            if (status === 'protection_failed' || mode === 'failed') {
+                return {
+                    label: 'FAILED',
+                    color: 'var(--down)',
+                    level: 'critical',
+                    detail: pos.protection_reason || pos.protection_error || 'Protection failed',
+                };
+            }
+            if (status === 'verify_warning') {
+                return {
+                    label: 'VERIFY WARN',
+                    color: 'var(--down)',
+                    level: 'critical',
+                    detail: pos.entry_verify_message || 'Entry protection verification warning',
+                };
+            }
+            if (status === 'entry_saved_pending_protection') {
+                return {
+                    label: 'PENDING',
+                    color: '#e3b341',
+                    level: 'warning',
+                    detail: 'Entry saved; protection placement pending',
+                };
+            }
+            if (mode === 'hybrid' || (slSrc === 'exchange' && tpSrc === 'local')) {
+                return {
+                    label: 'HYBRID SL/TP',
+                    color: 'var(--accent)',
+                    level: hasSl ? 'ok' : 'warning',
+                    detail: pos.protection_reason || 'SL on Binance, TP bot-managed',
+                };
+            }
+            if (mode === 'local') {
+                if (expectedLocalProtection(pos, opts)) {
+                    return {
+                        label: 'LOCAL SL/TP',
+                        color: 'var(--up)',
+                        level: 'ok',
+                        detail: pos.protection_reason || 'Bot-managed local protection (policy)',
+                    };
+                }
+                return {
+                    label: 'BOT SL/TP',
+                    color: 'var(--accent)',
+                    level: 'warning',
+                    detail: pos.protection_reason || 'Bot-managed local protection',
+                };
+            }
+            if (!hasSl || !hasTp) {
+                if (expectedLocalProtection(pos, opts)) {
+                    return {
+                        label: 'LOCAL SL/TP',
+                        color: 'var(--up)',
+                        level: 'ok',
+                        detail: pos.protection_reason || 'Bot-managed local protection (policy)',
+                    };
+                }
+                const missing = [!hasSl ? 'SL' : '', !hasTp ? 'TP' : ''].filter(Boolean).join('/');
+                return {
+                    label: 'NO SL/TP',
+                    color: 'var(--down)',
+                    level: 'critical',
+                    detail: `Missing ${missing}`,
+                };
+            }
+            return {
+                label: 'BINANCE SL/TP',
+                color: 'var(--up)',
+                level: 'ok',
+                detail: pos.entry_verify_status === 'ok' ? 'Verified' : '',
+            };
+        }
+
+        function renderProtectionBadge(pos, liveMode = true, opts = {}) {
+            const meta = protectionMeta(pos, liveMode, opts);
+            const source = pos.recovery_source ? `source ${pos.recovery_source}` : '';
+            const verify = pos.entry_verify_status && pos.entry_verify_status !== 'ok'
+                ? `verify ${pos.entry_verify_status}`
+                : '';
+            const detail = [meta.detail, source, verify].filter(Boolean).join(' · ');
+            return `
+                <span title="${escapeHtml(detail || meta.label)}" style="color:${meta.color};font-size:10px;font-weight:700;border:1px solid ${meta.color};padding:1px 5px;border-radius:3px;display:inline-block;white-space:nowrap;">
+                    ${escapeHtml(meta.label)}
+                </span>
+                ${detail ? `<div style="margin-top:2px;font-size:10px;color:var(--text-muted);white-space:normal;max-width:180px;line-height:1.25;">${escapeHtml(detail)}</div>` : ''}
+            `;
+        }
+
+        function formatSlTpPrice(value) {
+            const num = Number(value);
+            if (!Number.isFinite(num) || num <= 0) return '-';
+            const abs = Math.abs(num);
+            if (abs < 1) return num.toFixed(7);
+            if (abs < 10) return num.toFixed(5);
+            if (abs < 1000) return num.toFixed(4);
+            return num.toFixed(2);
+        }
+
+        function historySltpDiffPct(h) {
+            const slStored = Number(h.sl_diff_pct);
+            const tpStored = Number(h.tp_diff_pct);
+            if (Number.isFinite(slStored) || Number.isFinite(tpStored)) {
+                return { sl: slStored, tp: tpStored };
+            }
+            const entry = Number(h.entry_price);
+            const ep = Number(h.signal_entry_price || entry);
+            const signalSl = Number(h.signal_sl);
+            const signalTp = Number(h.signal_tp);
+            const placedSl = Number(h.placed_sl ?? h.sl);
+            const placedTp = Number(h.placed_tp ?? h.tp);
+            if (!entry || !signalSl || !signalTp || !placedSl || !placedTp) {
+                return { sl: NaN, tp: NaN };
+            }
+            const slDist = Math.abs(ep - signalSl);
+            const tpDist = Math.abs(signalTp - ep);
+            const isLong = String(h.side || '').toLowerCase() === 'long';
+            const stratSl = isLong ? entry - slDist : entry + slDist;
+            const stratTp = isLong ? entry + tpDist : entry - tpDist;
+            return {
+                sl: ((placedSl - stratSl) / entry) * 100,
+                tp: ((placedTp - stratTp) / entry) * 100,
+            };
+        }
+
+        function formatSltpDiffCell(h) {
+            const { sl, tp } = historySltpDiffPct(h);
+            if (!Number.isFinite(sl) && !Number.isFinite(tp)) {
+                return '<span style="color:var(--text-muted);font-size:11px;" title="No strategy SL/TP snapshot (trade before tracking or ExchangeSync)">—</span>';
+            }
+            const part = (label, v) => {
+                if (!Number.isFinite(v)) return `${label} —`;
+                const sign = v >= 0 ? '+' : '';
+                return `${label} ${sign}${v.toFixed(2)}%`;
+            };
+            return `<div style="font-size:10px;color:var(--text-dim);font-family:monospace;line-height:1.35;" title="Placed vs strategy re-anchored at entry (% of entry)">${part('SL', sl)}<br>${part('TP', tp)}</div>`;
+        }
+
+        let historyPageOffset = 0;
+        let historyPageSize = 50;
+        let historyPageDays = 0;
+        let historyPageRequestId = 0;
+
+        function historyRowHtml(h) {
+            const isoExit = normalizeIsoUtc(h.exit_time);
+            const d = new Date(isoExit);
+            const dateStr = d.getMonth() + 1 + '/' + d.getDate() + ' ' + d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+            const histColor = h.pnl_usd >= 0 ? 'color: var(--up);' : 'color: var(--down);';
+            const histPlus = h.pnl_usd >= 0 ? '+' : '';
+            const feeUsd = Number(h.fee_usd || 0);
+            const slipUsd = Number(h.slippage_usd || 0);
+            const realizedOnly = Number(h.realized_only);
+            const costParts = [];
+            if (feeUsd > 0) costParts.push(`fee ${formatMoney(feeUsd)}`);
+            if (slipUsd > 0) costParts.push(`slip ${formatMoney(slipUsd)}`);
+            if (Number.isFinite(realizedOnly) && feeUsd > 0) {
+                const rSign = realizedOnly >= 0 ? '+' : '';
+                costParts.unshift(`realized ${rSign}${formatMoney(realizedOnly)}`);
+            }
+            const costLine = costParts.length
+                ? `<div style="font-size:10px;color:var(--text-muted);font-weight:500;">${costParts.join(' · ')}</div>`
+                : '';
+            const stratName = strategyLabel(h.tab);
+            return `
+                <tr>
+                    <td style="font-weight:600">${symbolLink(h.symbol, ` <span style="font-size:11px;color:var(--text-muted);font-weight:normal;">[${stratName}]</span>`)}</td>
+                    <td><span class="badge ${h.side}">${h.side}</span></td>
+                    <td style="color:var(--text-dim);">${dateStr}</td>
+                    <td style="font-family:monospace;">${Number(h.entry_price || 0).toFixed(4)}</td>
+                    <td style="font-family:monospace;">${parseFloat(h.exit_price).toFixed(4)}</td>
+                    <td>${formatSltpDiffCell(h)}</td>
+                    <td style="font-weight:900; font-size:16px; ${histColor}">${histPlus}${formatMoney(h.pnl_usd)}${costLine}</td>
+                    <td><span style="font-size:11px;color:var(--text-main);border:1px solid #30363d;padding:2px 6px;border-radius:4px;">${h.reason}</span></td>
+                </tr>
+            `;
+        }
+
+        function updateHistoryPager(payload) {
+            const total = Number(payload.total || 0);
+            const offset = Number(payload.offset || 0);
+            const limit = Number(payload.limit || historyPageSize);
+            const metaEl = document.getElementById('historyPagerMeta');
+            const prevBtn = document.getElementById('historyPrevBtn');
+            const nextBtn = document.getElementById('historyNextBtn');
+            if (metaEl) {
+                if (total <= 0) {
+                    metaEl.textContent = 'No closes for this filter';
+                } else {
+                    const from = offset + 1;
+                    const to = Math.min(offset + limit, total);
+                    metaEl.textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} · newest first`;
+                }
+            }
+            if (prevBtn) prevBtn.disabled = !payload.has_more;
+            if (nextBtn) nextBtn.disabled = offset <= 0;
+        }
+
+        async function loadHistoryPage() {
+            const reqId = ++historyPageRequestId;
+            const histTable = document.getElementById('histTable');
+            if (!histTable) return;
+            histTable.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:1.5rem;">Loading history…</td></tr>';
+            const params = new URLSearchParams({
+                tab: activeTabFilter,
+                offset: String(historyPageOffset),
+                limit: String(historyPageSize),
+                days: String(historyPageDays),
+            });
+            try {
+                const res = await fetch(`/api/history?${params.toString()}`, { headers: authHeaders() });
+                if (reqId !== historyPageRequestId) return;
+                if (!res.ok) {
+                    let detail = res.statusText;
+                    try {
+                        const err = await res.json();
+                        if (err && err.error) detail = err.error;
+                    } catch (_) { /* ignore */ }
+                    throw new Error(detail || `HTTP ${res.status}`);
+                }
+                const payload = await res.json();
+                if (reqId !== historyPageRequestId) return;
+                const histSourceEl = document.getElementById('recentHistorySource');
+                if (histSourceEl) {
+                    const dayLabel = payload.days > 0 ? `last ${payload.days}d` : 'all time';
+                    const live = window.lastDataPayload && window.lastDataPayload.live_mode;
+                    const src = payload.source === 'binance'
+                        ? 'Binance closes'
+                        : (live ? 'bot history' : 'paper / simulated');
+                    histSourceEl.textContent = `(${src} · ${dayLabel} · paginated)`;
+                }
+                const rows = payload.history || [];
+                histTable.innerHTML = rows.length
+                    ? rows.map(historyRowHtml).join('')
+                    : '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:2rem;">No history recorded for the current filter.</td></tr>';
+                updateHistoryPager(payload);
+            } catch (err) {
+                if (reqId !== historyPageRequestId) return;
+                histTable.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--down);padding:1.5rem;">History load failed: ${err.message || err}</td></tr>`;
+                const metaEl = document.getElementById('historyPagerMeta');
+                if (metaEl) metaEl.textContent = '';
+            }
+        }
+
+        function initHistoryPager() {
+            const sizeSel = document.getElementById('historyPageSizeSel');
+            const daysSel = document.getElementById('historyDaysSel');
+            const prevBtn = document.getElementById('historyPrevBtn');
+            const nextBtn = document.getElementById('historyNextBtn');
+            if (sizeSel) {
+                sizeSel.value = String(historyPageSize);
+                sizeSel.onchange = () => {
+                    historyPageSize = parseInt(sizeSel.value, 10) || 50;
+                    historyPageOffset = 0;
+                    loadHistoryPage();
+                };
+            }
+            if (daysSel) {
+                daysSel.value = String(historyPageDays);
+                daysSel.onchange = () => {
+                    historyPageDays = parseInt(daysSel.value, 10) || 0;
+                    historyPageOffset = 0;
+                    loadHistoryPage();
+                };
+            }
+            if (prevBtn) {
+                prevBtn.onclick = () => {
+                    historyPageOffset += historyPageSize;
+                    loadHistoryPage();
+                };
+            }
+            if (nextBtn) {
+                nextBtn.onclick = () => {
+                    historyPageOffset = Math.max(0, historyPageOffset - historyPageSize);
+                    loadHistoryPage();
+                };
+            }
+        }
+
+        function formatSltpDiffInline(pos) {
+            const { sl, tp } = historySltpDiffPct(pos);
+            if (!Number.isFinite(sl) && !Number.isFinite(tp)) return '';
+            const part = (label, v) => Number.isFinite(v) ? `${label} ${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '';
+            const line = [part('SL', sl), part('TP', tp)].filter(Boolean).join(' · ');
+            return line ? `<div class="sltp-away" style="margin-top:4px;">Δ ${line}</div>` : '';
+        }
+
+        function renderSlTpPanel(pos, livePrice) {
+            const sl = Number(pos.sl);
+            const tp = Number(pos.tp);
+            const live = Number(livePrice);
+            if (![sl, tp, live].every(v => Number.isFinite(v) && v > 0) || sl === tp) {
+                return `<div class="sltp-away">SL/TP price unavailable</div>`;
+            }
+
+            const totalDist = Math.abs(tp - sl);
+            const distFromSL = Math.abs(live - sl);
+            const progressPct = Math.max(0, Math.min(100, (distFromSL / totalDist) * 100));
+            const slAwayAbs = Math.abs(live - sl);
+            const tpAwayAbs = Math.abs(tp - live);
+            const slAwayPct = live > 0 ? (slAwayAbs / live) * 100 : 0;
+            const tpAwayPct = live > 0 ? (tpAwayAbs / live) * 100 : 0;
+            const nearIsTp = tpAwayPct <= slAwayPct;
+            const nearLabel = nearIsTp ? 'TP' : 'SL';
+            const nearAbs = nearIsTp ? tpAwayAbs : slAwayAbs;
+            const nearPct = nearIsTp ? tpAwayPct : slAwayPct;
+            const nearColor = nearIsTp ? 'var(--up)' : 'var(--down)';
+
+            return `
+                <div class="sltp-panel" title="SL ${formatSlTpPrice(sl)} | TP ${formatSlTpPrice(tp)} | Live ${formatSlTpPrice(live)}">
+                    <div class="sltp-values">
+                        <div class="sltp-box">
+                            <div class="sltp-label">SL</div>
+                            <div class="sltp-price" style="color:var(--down);">${formatSlTpPrice(sl)}</div>
+                        </div>
+                        <div class="sltp-box">
+                            <div class="sltp-label">TP</div>
+                            <div class="sltp-price" style="color:var(--up);">${formatSlTpPrice(tp)}</div>
+                        </div>
+                    </div>
+                    <div class="sltp-track">
+                        <div class="sltp-fill" style="width:${progressPct.toFixed(1)}%;background:${nearColor};"></div>
+                    </div>
+                    <div class="sltp-near" style="color:${nearColor};">
+                        Near ${nearLabel}: ${formatSlTpPrice(nearAbs)} (${nearPct.toFixed(2)}%)
+                    </div>
+                    <div class="sltp-away">
+                        TP ${tpAwayPct.toFixed(2)}% away &middot; SL ${slAwayPct.toFixed(2)}% away
+                    </div>
+                    ${formatSltpDiffInline(pos)}
+                </div>
+            `;
+        }
+
+        function positionOpenPnl(pos, livePrice) {
+            const price = Number(livePrice);
+            const entry = Number(pos.entry_price);
+            const qty = Number(pos.qty);
+            if (![price, entry, qty].every(v => Number.isFinite(v)) || price <= 0 || entry <= 0 || qty <= 0) return 0;
+            return pos.side === 'Short' ? (entry - price) * qty : (price - entry) * qty;
+        }
+
+        /** Proportional Binance unrealized per bot position (hedge leg shared across tabs). */
+        function buildLivePnlAllocation(data) {
+            const liveAllocation = {};
+            if (!data.live_mode || !data.exchange_account || !Array.isArray(data.exchange_account.positions)) {
+                return liveAllocation;
+            }
+            const groupedBotQty = {};
+            for (const [, pos] of Object.entries(data.open_positions || {})) {
+                const groupKey = `${pos.symbol}__${pos.side}`;
+                groupedBotQty[groupKey] = (groupedBotQty[groupKey] || 0) + (Number(pos.qty) || 0);
+            }
+            for (const [key, pos] of Object.entries(data.open_positions || {})) {
+                const groupKey = `${pos.symbol}__${pos.side}`;
+                const groupQty = groupedBotQty[groupKey] || 0;
+                const eaPos = data.exchange_account.positions.find(
+                    x => x.symbol === pos.symbol && x.side === pos.side
+                );
+                if (eaPos && groupQty > 0) {
+                    liveAllocation[key] = {
+                        pnl: (Number(eaPos.unrealizedProfit) || 0) * ((Number(pos.qty) || 0) / groupQty),
+                        markPrice: eaPos.markPrice,
+                    };
+                }
+            }
+            return liveAllocation;
+        }
+
+        function binanceGrossForTab(data, tab) {
+            const row = (data.pnl_summary && data.pnl_summary.per_tab && data.pnl_summary.per_tab[tab]) || null;
+            if (!data.live_mode || !row) return null;
+            const profit = Number(row.gross_profit);
+            const loss = Number(row.gross_loss);
+            if (!Number.isFinite(profit) || !Number.isFinite(loss)) return null;
+            const realized = Number(row.realized);
+            return {
+                grossWin: profit,
+                grossLoss: loss,
+                realized: Number.isFinite(realized) ? realized : (profit - loss),
+            };
+        }
+
+        function applyBinanceGrossToStratRow(s, data, tab) {
+            const bin = binanceGrossForTab(data, tab);
+            if (!bin) return;
+            s.grossWin = bin.grossWin;
+            s.grossLoss = bin.grossLoss;
+            s.total = bin.realized + s.unrealized;
+        }
+
+        function stratRowHasData(s) {
+            return s.trades > 0 || s.grossWin > 0.000001 || s.grossLoss > 0.000001;
+        }
+
+        /** SUM row: trades/gross from table, or LIVE account PnL when income exists without closes in window. */
+        function stratSumRowHasData(data, stratTotals) {
+            if (stratRowHasData(stratTotals)) return true;
+            if (!data.live_mode) return false;
+            const acct = (data.pnl_summary && data.pnl_summary.account) || {};
+            return Math.abs(Number(acct.total || 0)) > 0.000001
+                || Math.abs(Number(acct.realized || 0)) > 0.000001
+                || Math.abs(Number(acct.unrealized || 0)) > 0.000001
+                || Math.abs(Number(acct.gross_profit || 0)) > 0.000001
+                || Math.abs(Number(acct.gross_loss || 0)) > 0.000001;
+        }
+
+        function formatStratOpenLsCell(longCount, shortCount, bold) {
+            const total = longCount + shortCount;
+            if (total === 0) return '<span style="color:var(--text-muted);">—</span>';
+            const col = longCount === shortCount ? 'var(--accent)' : (longCount > shortCount ? 'var(--up)' : 'var(--down)');
+            const fw = bold ? 'font-weight:900;' : 'font-weight:800;';
+            return `<span style="${fw} color:${col};">${longCount} / ${shortCount}</span>`;
+        }
+
+        function formatStratGrossProfit(hasData, grossWin) {
+            if (!hasData || grossWin <= 0.000001) return '—';
+            return '+' + formatMoney(grossWin);
+        }
+
+        function formatStratGrossLoss(hasData, grossLoss) {
+            if (!hasData || grossLoss <= 0.000001) return '—';
+            return '-' + formatMoney(grossLoss);
+        }
+
+        /** Top 5 strategies by Total PnL (trades required; excludes SafeGuard / Recovered). */
+        function computeStratTopRanks(stratStatsData, stratRows) {
+            const ranks = {};
+            const eligible = stratRows.filter((tab) => {
+                if (tab === 'SafeGuard' || tab === 'Recovered') return false;
+                const s = stratStatsData[tab];
+                return s && s.trades > 0;
+            });
+            eligible
+                .sort((a, b) => (stratStatsData[b].total || 0) - (stratStatsData[a].total || 0))
+                .slice(0, 5)
+                .forEach((tab, idx) => { ranks[tab] = idx + 1; });
+            return ranks;
+        }
+
+        function stratTopBadgeHtml(rank) {
+            if (!rank || rank < 1 || rank > 5) return '';
+            return `<span class="strat-top-badge strat-top${rank}-badge">TOP ${rank}</span>`;
+        }
+
+        function stratTopRowClass(rank) {
+            if (!rank || rank < 1 || rank > 5) return '';
+            return `strat-row-top${rank}`;
+        }
+
+        /** LIVE: exchange-wide open PnL (matches Binance account card). */
+        function exchangeUnrealizedTotal(data) {
+            const ea = data.exchange_account;
+            if (!data.live_mode || !ea) return null;
+            if (Number.isFinite(Number(ea.unrealizedProfit))) {
+                return Number(ea.unrealizedProfit);
+            }
+            if (!Array.isArray(ea.positions)) return null;
+            let total = 0;
+            for (const p of ea.positions) {
+                const amt = Math.abs(Number(p.positionAmt || 0));
+                if (amt <= 0) continue;
+                total += Number(p.unrealizedProfit || p.unRealizedProfit || 0);
+            }
+            return total;
+        }
+
+        /** SUM row: sum of per-strategy Profit / Loss / Unrealized (not account-wide income). */
+        function finalizeStratSumRow(data, stratTotals) {
+            stratTotals.total = stratTotals.grossWin - stratTotals.grossLoss + stratTotals.unrealized;
+        }
+
+        function closeWindowGrossForTab(statsTrades, tab) {
+            let grossWin = 0;
+            let grossLoss = 0;
+            for (const t of statsTrades) {
+                if (t.tab !== tab) continue;
+                const pnl = Number(t.pnl_usd || 0);
+                if (pnl > 0) grossWin += pnl;
+                else if (pnl < 0) grossLoss += Math.abs(pnl);
+            }
+            return { grossWin, grossLoss };
+        }
+
+        /** Prefer bot close-window gross when Binance tab income is missing or mostly in Recovered. */
+        function binanceTabGrossLooksIncomplete(s, statsTrades, tab) {
+            if (s.trades <= 0) return false;
+            const cw = closeWindowGrossForTab(statsTrades, tab);
+            const closeTotal = cw.grossWin + cw.grossLoss;
+            const binTotal = Number(s.grossWin || 0) + Number(s.grossLoss || 0);
+            return closeTotal > 0.000001 && binTotal < closeTotal * 0.5;
+        }
+
+        /** LIVE: Binance income per tab; fallback to close-window gross when tab income not rebuilt yet. */
+        function applyStratGrossForTab(s, data, tab, statsTrades) {
+            if (!data.live_mode) return;
+            if (shouldUseBinanceIncomeForTab(data, tab, s)) {
+                applyBinanceGrossToStratRow(s, data, tab);
+                if (s.trades > 0 && (
+                    (s.grossWin <= 0.000001 && s.grossLoss <= 0.000001)
+                    || binanceTabGrossLooksIncomplete(s, statsTrades, tab)
+                )) {
+                    applyStratRowFromCloseWindow(s, statsTrades, tab);
+                }
+            } else {
+                applyStratRowFromCloseWindow(s, statsTrades, tab);
+            }
+        }
+
+        /** LIVE: lifetime Binance income on idle OFF tabs (0 open, 0 closes in window) is often mis-attributed. */
+        function shouldUseBinanceIncomeForTab(data, tab, s) {
+            if (tab === 'SafeGuard' || tab === 'Recovered') return true;
+            if (s.open > 0 || s.trades > 0) return true;
+            return (data.tab_enabled || {})[tab] === true;
+        }
+
+        function applyStratRowFromCloseWindow(s, statsTrades, tab) {
+            const cw = closeWindowGrossForTab(statsTrades, tab);
+            s.grossWin = cw.grossWin;
+            s.grossLoss = cw.grossLoss;
+            s.total = (s.grossWin - s.grossLoss) + s.unrealized;
+        }
+
+        /** Closed trades for win-rate / counts (reconciled bot history; same on paper & live). */
+        function closedTradesForStats(data) {
+            const rows = data.stats_trade_history || data.recent_history || [];
+            return Array.isArray(rows) ? rows : [];
+        }
+
+        function isWinningTrade(pnlUsd) {
+            return Number(pnlUsd || 0) > 0;
+        }
+
+        function accumulateClosedTradeStats(s, trade, liveMode) {
+            const pnl = Number(trade.pnl_usd || 0);
+            s.trades++;
+            if (isWinningTrade(pnl)) {
+                s.wins++;
+            }
+            if (!liveMode) {
+                s.total += pnl;
+                if (pnl > 0) {
+                    s.grossWin += pnl;
+                } else if (pnl < 0) {
+                    s.grossLoss += Math.abs(pnl);
+                }
+            }
+            if (s.best === null || pnl > s.best) {
+                s.best = pnl;
+            }
+            if (s.worst === null || pnl < s.worst) {
+                s.worst = pnl;
+            }
+        }
+
+        function applyTabStatsRow(s, row) {
+            if (!row) return;
+            s.trades = Number(row.trades || 0);
+            s.wins = Number(row.wins || 0);
+            const best = row.best;
+            const worst = row.worst;
+            s.best = best === null || best === undefined ? null : Number(best);
+            s.worst = worst === null || worst === undefined ? null : Number(worst);
+        }
+
+        function fillStratRowFromStats(s, data, tab, statsTrades, liveMode) {
+            if (liveMode && data.tab_stats && Object.prototype.hasOwnProperty.call(data.tab_stats, tab)) {
+                applyTabStatsRow(s, data.tab_stats[tab]);
+                return;
+            }
+            for (const t of statsTrades) {
+                if (t.tab !== tab) continue;
+                accumulateClosedTradeStats(s, t, liveMode);
+            }
+        }
+
+        /** Chart "Now" = realized leg + open unrealized. */
+        function chartNowTotal(realizedFromCurve, unrealized) {
+            return Number(realizedFromCurve || 0) + Number(unrealized || 0);
+        }
+
+        const STRAT_CURVE_TABS = [
+            'Tab1', 'Tab2', 'Tab3', 'Tab4', 'Tab5', 'Tab6', 'Tab7', 'Tab8',
+            'Tab9', 'Tab10', 'Tab11', 'Tab12', 'Tab13', 'Tab14', 'Tab15', 'Tab16', 'Tab17', 'Tab18',
+            'SafeGuard', 'Recovered',
+        ];
+
+        /** Tab All metrics: only tabs with dashboard ON switch. */
+        function enabledTabsForAll(data) {
+            const te = data.tab_enabled || {};
+            return STRAT_CURVE_TABS.filter(tab => tab.startsWith('Tab') && te[tab] === true);
+        }
+
+        function statsTradesForFilter(data, statsTrades, tabFilter) {
+            if (tabFilter !== 'All') {
+                return statsTrades.filter(h => h.tab === tabFilter);
+            }
+            const enabled = new Set(enabledTabsForAll(data));
+            return statsTrades.filter(h => enabled.has(h.tab));
+        }
+
+        function tabsForCurveFilter(data, tabFilter) {
+            if (tabFilter !== 'All') return [tabFilter];
+            return enabledTabsForAll(data);
+        }
+
+        function summarizeEnabledTabs(data, pnlSummary) {
+            const enabled = enabledTabsForAll(data);
+            let realized = 0;
+            let unrealized = 0;
+            const perTab = pnlSummary.per_tab || {};
+            for (const tab of enabled) {
+                const row = perTab[tab] || {};
+                realized += Number(row.realized || 0);
+                unrealized += Number(row.unrealized || 0);
+            }
+            return { realized, unrealized, total: realized + unrealized };
+        }
+
+        function enabledTabsMetricsNote(data) {
+            const n = enabledTabsForAll(data).length;
+            return n ? `${n} enabled tab(s)` : 'no tabs enabled';
+        }
+
+        function positionMatchesTabFilter(data, tab, tabFilter) {
+            if (tabFilter !== 'All') return tab === tabFilter;
+            return enabledTabsForAll(data).includes(tab);
+        }
+
+        /** Strategy Profit − Loss totals (same rules as Strategy Performance table). */
+        function buildStratGrossTotals(data, statsTrades, tabFilter) {
+            const tabs = tabsForCurveFilter(data, tabFilter);
+            const liveAllocation = data.live_mode ? buildLivePnlAllocation(data) : null;
+            let grossWin = 0;
+            let grossLoss = 0;
+            let unrealized = 0;
+            for (const tab of tabs) {
+                const s = { open: 0, trades: 0, wins: 0, grossWin: 0, grossLoss: 0, unrealized: 0 };
+                for (const [posKey, p] of Object.entries(data.open_positions || {})) {
+                    if (p.tab !== tab) continue;
+                    s.open++;
+                    s.unrealized += positionUnrealizedPnl(posKey, p, data, liveAllocation);
+                }
+                fillStratRowFromStats(s, data, tab, statsTrades, !!data.live_mode);
+                if (data.live_mode) {
+                    applyStratGrossForTab(s, data, tab, statsTrades);
+                } else {
+                    const cw = closeWindowGrossForTab(statsTrades, tab);
+                    s.grossWin = cw.grossWin;
+                    s.grossLoss = cw.grossLoss;
+                }
+                grossWin += Number(s.grossWin || 0);
+                grossLoss += Number(s.grossLoss || 0);
+                unrealized += Number(s.unrealized || 0);
+            }
+            const net = grossWin - grossLoss;
+            return { grossWin, grossLoss, net, unrealized, total: net + unrealized };
+        }
+
+        function formatCurveExitLabel(rawTime) {
+            const isoTime = !rawTime ? '' : (rawTime.endsWith('Z') || rawTime.includes('+') ? rawTime : rawTime + 'Z');
+            if (!isoTime) return '';
+            const dt = new Date(isoTime);
+            return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                + ' ' + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function useMarginEquityCurve(data, tabFilter) {
+            if (!data.live_mode || tabFilter !== 'All') return false;
+            const baseline = Number(data.equity_margin_baseline || 0);
+            const mh = Array.isArray(data.margin_history) ? data.margin_history : [];
+            return baseline > 0 || mh.length >= 1;
+        }
+
+        /** LIVE All: account margin balance (baseline deposit + samples + Now). */
+        function buildMarginEquityCurve(data) {
+            const baseline = Number(data.equity_margin_baseline || 0);
+            const mh = Array.isArray(data.margin_history) ? data.margin_history : [];
+            const ea = data.exchange_account || {};
+            const currentMb = Number(ea.marginBalance ?? ea.walletBalance ?? 0);
+            const c_data = [];
+            const c_labels = [];
+            const c_symbols = [];
+
+            const pushPoint = (label, value, detail) => {
+                c_labels.push(label);
+                c_data.push(value);
+                c_symbols.push(detail || `Margin ${formatMoney(value)}`);
+            };
+
+            if (baseline > 0) {
+                pushPoint('Start', baseline, `Deposit ${formatMoney(baseline)}`);
+            }
+
+            for (const row of mh) {
+                const v = Number(row.value);
+                if (!Number.isFinite(v) || v <= 0) continue;
+                const t = parseMarginHistoryTime(row.time);
+                const lbl = Number.isFinite(t)
+                    ? formatCurveExitLabel(new Date(t).toISOString())
+                    : (row.time || 'Sample');
+                pushPoint(lbl, v, `Margin ${formatMoney(v)}`);
+            }
+
+            if (currentMb > 0) {
+                const last = c_data.length ? c_data[c_data.length - 1] : NaN;
+                if (!Number.isFinite(last) || Math.abs(currentMb - last) > 0.01) {
+                    pushPoint('Now', currentMb, `Margin ${formatMoney(currentMb)}`);
+                }
+            } else if (!c_data.length && baseline > 0) {
+                pushPoint('Now', baseline, `Margin ${formatMoney(baseline)}`);
+            }
+
+            const curveRef = baseline > 0 ? baseline : (c_data.length ? c_data[0] : 0);
+            const chartEndTotal = c_data.length ? c_data[c_data.length - 1] : 0;
+            const windowRealized = chartEndTotal - curveRef;
+            return {
+                c_data,
+                c_labels,
+                c_symbols,
+                currentEq: windowRealized,
+                curveOffset: curveRef,
+                curveRef,
+                chartEndTotal,
+                windowRealized,
+                isMarginCurve: true,
+                label: baseline > 0
+                    ? `Account margin (from ${formatMoney(baseline)})`
+                    : 'Account margin balance',
+            };
+        }
+
+        /** Cumulative Profit − Loss from closes; Now matches Strategy table $ for the filter. */
+        function buildStrategyGrossCurve(data, statsTrades, tabFilter, hasOpenPnl) {
+            const tabs = tabsForCurveFilter(data, tabFilter);
+            const tabSet = new Set(tabs);
+            const rows = [...statsTrades]
+                .filter(t => tabSet.has(t.tab || 'Recovered'))
+                .sort((a, b) => {
+                    const ta = new Date(normalizeIsoUtc(a.exit_time || 0)).getTime();
+                    const tb = new Date(normalizeIsoUtc(b.exit_time || 0)).getTime();
+                    return ta - tb;
+                });
+            const paperEquityCurve = !data.live_mode && tabFilter !== 'All';
+            const equityBase = paperEquityCurve ? Number(data.initial_balance || 7000) : 0;
+            let cumWin = 0;
+            let cumLoss = 0;
+            const c_data = [equityBase];
+            const c_labels = ['Start'];
+            const c_symbols = paperEquityCurve
+                ? [`Deposit ${formatMoney(equityBase)}`]
+                : [''];
+            for (const t of rows) {
+                const pnl = Number(t.pnl_usd || 0);
+                if (pnl > 0) cumWin += pnl;
+                else if (pnl < 0) cumLoss += Math.abs(pnl);
+                const net = cumWin - cumLoss;
+                c_data.push(equityBase + net);
+                const dtStr = formatCurveExitLabel(t.exit_time);
+                if (dtStr) c_labels.push(dtStr);
+                else c_labels.push('Close');
+                const tabLbl = t.tab ? strategyLabel(t.tab) : '';
+                c_symbols.push(
+                    `${t.symbol || ''}${tabLbl ? ' · ' + tabLbl : ''} · `
+                    + `P ${formatMoney(cumWin)} − L ${formatMoney(cumLoss)} = ${signedMoney(net)}`
+                    + (paperEquityCurve ? ` · Equity ${formatMoney(equityBase + net)}` : '')
+                );
+            }
+            const totals = buildStratGrossTotals(data, statsTrades, tabFilter);
+            const currentEq = totals.net;
+            const chartEndTotal = paperEquityCurve ? equityBase + totals.total : totals.total;
+            const showCurrentPoint = hasOpenPnl
+                || rows.length === 0
+                || Math.abs(chartEndTotal - (paperEquityCurve ? equityBase + currentEq : currentEq)) > 0.000001
+                || Math.abs(currentEq - (cumWin - cumLoss)) > 0.01;
+            if (showCurrentPoint) {
+                c_data.push(chartEndTotal);
+                c_labels.push('Now');
+                c_symbols.push(
+                    `Profit ${formatMoney(totals.grossWin)} − Loss ${formatMoney(totals.grossLoss)} = ${signedMoney(currentEq)}`
+                    + ` · Open ${signedMoney(totals.unrealized)} · Now ${formatMoney(chartEndTotal)}`
+                );
+            }
+            return {
+                c_data,
+                c_labels,
+                c_symbols,
+                currentEq,
+                curveOffset: equityBase,
+                curveRef: equityBase,
+                chartEndTotal,
+                windowRealized: currentEq,
+                isMarginCurve: paperEquityCurve,
+                label: paperEquityCurve
+                    ? `${strategyLabel(tabFilter)} equity (from ${formatMoney(equityBase)})`
+                    : (tabFilter === 'All'
+                        ? 'Strategy PnL (Profit − Loss)'
+                        : `${strategyLabel(tabFilter)} Profit − Loss`),
+            };
+        }
+
+        function paintEquityChart(data, build) {
+            if (IS_MOBILE_LITE || !equityChart) return;
+            equityChart.data.labels = build.c_labels;
+            equityChart.data.datasets[0].data = build.c_data;
+            equityChart.data.datasets[0].label = build.label || (
+                activeTabFilter === 'All' ? 'All Strategy PnL' : `${strategyLabel(activeTabFilter)} — Strategy PnL`
+            );
+            equityChart._symbolLabels = build.c_symbols;
+            const ref = build.isMarginCurve ? (build.curveRef ?? build.curveOffset ?? 0) : 0;
+            styleEquityChart(build.chartEndTotal, ref);
+            updateEquityChartCaption(data, build);
+            equityChart.update();
+        }
+
+        function styleEquityChart(endValue, refValue = 0) {
+            const up = Number(endValue) >= Number(refValue || 0);
+            const border = up ? '#3fb950' : '#f85149';
+            const fillTop = up ? 'rgba(63, 185, 80, 0.35)' : 'rgba(248, 81, 73, 0.35)';
+            const ds = equityChart.data.datasets[0];
+            ds.borderColor = border;
+            const ctx = equityChart.ctx;
+            const grad = ctx.createLinearGradient(0, 0, 0, 300);
+            grad.addColorStop(0, fillTop);
+            grad.addColorStop(1, up ? 'rgba(63, 185, 80, 0)' : 'rgba(248, 81, 73, 0)');
+            ds.backgroundColor = grad;
+        }
+
+        function updateEquityChartCaption(data, build) {
+            const el = document.getElementById('equityChartCaption');
+            if (!el) return;
+            const meta = data.stats_meta || {};
+            const days = meta.close_history_days || 90;
+            const binanceCloses = !!(meta.close_history_enabled && meta.trade_counts === 'binance_closes');
+            if (!data.live_mode) {
+                if (build?.isMarginCurve && activeTabFilter !== 'All') {
+                    const base = Number(build.curveRef ?? build.curveOffset ?? data.initial_balance ?? 7000);
+                    el.textContent = `Curve = paper account equity from ${formatMoney(base)} deposit + closes.`;
+                } else {
+                    el.textContent = 'Curve = simulated closes (all history in state).';
+                }
+                return;
+            }
+            if (build?.isMarginCurve) {
+                const base = Number(build.curveRef ?? build.curveOffset ?? 0);
+                const end = Number(build.chartEndTotal ?? 0);
+                const delta = end - base;
+                const baseTxt = base > 0 ? ` from ${formatMoney(base)} deposit` : '';
+                el.textContent = `Curve = Binance account margin balance${baseTxt} (15-min samples + Now). `
+                    + `Change ${signedMoney(delta)} vs start. Per-strategy PnL is in the table below.`;
+                return;
+            }
+            const tabLbl = activeTabFilter === 'All' ? 'all strategies' : strategyLabel(activeTabFilter);
+            const src = binanceCloses
+                ? `Binance closes (~${days}d)`
+                : (data.live_mode ? 'bot close history' : 'simulated closes');
+            el.textContent = `Curve = cumulative Profit − Loss for ${tabLbl} (${src}). `
+                + 'Shape from each close; Now = Strategy table Profit − Loss + open unrealized.';
+            if (data.live_mode && activeTabFilter === 'All') {
+                el.textContent += ' Account-wide PnL is in the SUM breakdown row below the table.';
+            }
+        }
+
+        function equitySeriesForFilter(data) {
+            const raw = Array.isArray(data.equity_close_series) ? data.equity_close_series : [];
+            const tab = activeTabFilter;
+            if (!raw.length) {
+                return null;
+            }
+            if (tab === 'All') {
+                const enabled = new Set(enabledTabsForAll(data));
+                if (!enabled.size) return [];
+                return raw.filter(pt => pt.tab && enabled.has(pt.tab));
+            }
+            const out = [{ exit_time: null, cumulative: 0, symbol: '', pnl_usd: 0, tab }];
+            let cum = 0;
+            for (const pt of raw) {
+                if (!pt || !pt.exit_time) continue;
+                if (pt.tab !== tab) continue;
+                const pnl = Number(pt.pnl_usd || 0);
+                cum += pnl;
+                out.push({
+                    exit_time: pt.exit_time,
+                    cumulative: cum,
+                    symbol: pt.symbol || '',
+                    pnl_usd: pnl,
+                    tab: pt.tab,
+                });
+            }
+            return out.length > 1 ? out : null;
+        }
+
+        const RISK_METRICS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+        function parseMarginHistoryTime(raw) {
+            if (!raw) return NaN;
+            const text = String(raw).trim();
+            if (!text) return NaN;
+            const iso = text.includes('T') ? text : text.replace(' ', 'T') + ':00Z';
+            const ms = new Date(iso).getTime();
+            return Number.isFinite(ms) ? ms : NaN;
+        }
+
+        function maxDrawdownFromValues(values) {
+            if (!values || values.length < 2) return null;
+            let peak = values[0];
+            let maxDdPct = 0;
+            let maxDdUsd = 0;
+            for (const value of values) {
+                if (value > peak) peak = value;
+                const ddUsd = peak - value;
+                if (ddUsd > maxDdUsd) maxDdUsd = ddUsd;
+                if (peak > 0) {
+                    const ddPct = ddUsd / peak;
+                    if (ddPct > maxDdPct) maxDdPct = ddPct;
+                }
+            }
+            return { pct: maxDdPct * 100, usd: maxDdUsd, peak };
+        }
+
+        function dailyReturnsFromEquityPoints(points) {
+            if (!points || points.length < 2) return [];
+            const byDay = new Map();
+            for (const p of points) {
+                const day = new Date(p.t).toISOString().slice(0, 10);
+                byDay.set(day, p.v);
+            }
+            const days = [...byDay.keys()].sort();
+            const returns = [];
+            for (let i = 1; i < days.length; i++) {
+                const prev = byDay.get(days[i - 1]);
+                const cur = byDay.get(days[i]);
+                if (prev > 0) returns.push((cur - prev) / prev);
+            }
+            return returns;
+        }
+
+        function annualizedSharpe(returns) {
+            if (!returns || returns.length < 2) return null;
+            const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+            const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (returns.length - 1);
+            const std = Math.sqrt(variance);
+            if (!Number.isFinite(std) || std < 1e-12) return null;
+            return (mean / std) * Math.sqrt(365);
+        }
+
+        function marginEquity30d(data) {
+            const mh = Array.isArray(data.margin_history) ? data.margin_history : [];
+            if (mh.length < 2) return null;
+            const cutoff = Date.now() - RISK_METRICS_WINDOW_MS;
+            const points = mh
+                .map(row => ({ t: parseMarginHistoryTime(row.time), v: Number(row.value) }))
+                .filter(p => Number.isFinite(p.t) && p.t >= cutoff && p.v > 0)
+                .sort((a, b) => a.t - b.t);
+            return points.length >= 2 ? points : null;
+        }
+
+        function closeEquity30d(data, chartTotal) {
+            const cutoff = Date.now() - RISK_METRICS_WINDOW_MS;
+            const series = equitySeriesForFilter(data);
+            if (!series || series.length < 2) return null;
+            const closes = [];
+            for (const pt of series) {
+                if (!pt || !pt.exit_time) continue;
+                const t = new Date(normalizeIsoUtc(pt.exit_time)).getTime();
+                if (!Number.isFinite(t) || t < cutoff) continue;
+                closes.push({ t, cum: Number(pt.cumulative || 0) });
+            }
+            if (!closes.length) return null;
+            const lev = Number(data.leverage || 5);
+            const anchor = Math.max(
+                Math.abs(closes[0].cum),
+                Number(data.notional_size || 10),
+                Number(data.margin_size || 2) * (lev > 0 ? lev : 5),
+                100
+            );
+            const points = closes.map(p => ({ t: p.t, v: anchor + p.cum }));
+            const last = points[points.length - 1];
+            const nowMs = Date.now();
+            if (Number.isFinite(chartTotal) && nowMs - last.t > 60_000) {
+                points.push({ t: nowMs, v: anchor + Number(chartTotal) });
+            }
+            return points.length >= 2 ? points : null;
+        }
+
+        function dailyReturnsFromTradeHistory(targetHist, notionalSize) {
+            const cutoff = Date.now() - RISK_METRICS_WINDOW_MS;
+            const dayPnL = new Map();
+            for (const row of targetHist || []) {
+                const rawTime = row.exit_time || row.entry_time;
+                const t = new Date(normalizeIsoUtc(rawTime)).getTime();
+                if (!Number.isFinite(t) || t < cutoff) continue;
+                const day = new Date(t).toISOString().slice(0, 10);
+                dayPnL.set(day, (dayPnL.get(day) || 0) + Number(row.pnl_usd || 0));
+            }
+            const days = [...dayPnL.keys()].sort();
+            if (days.length < 2) return [];
+            const anchor = Math.max(Number(notionalSize || 10) * 5, 100);
+            let cum = 0;
+            const points = days.map(day => {
+                cum += dayPnL.get(day) || 0;
+                return { t: new Date(day + 'T00:00:00Z').getTime(), v: anchor + cum };
+            });
+            return dailyReturnsFromEquityPoints(points);
+        }
+
+        function computeRiskMetrics(data, targetHist, chartTotal) {
+            const enabledNote = activeTabFilter === 'All' ? enabledTabsMetricsNote(data) : '';
+            const useAccountMargin = false;
+            const marginPts = useAccountMargin ? marginEquity30d(data) : null;
+            const closePts = marginPts ? null : closeEquity30d(data, chartTotal);
+            const equityPts = marginPts || closePts;
+            const mdd = equityPts
+                ? maxDrawdownFromValues(equityPts.map(p => p.v))
+                : null;
+
+            let sharpe = null;
+            let sharpeDays = 0;
+            let sharpeSource = '';
+            if (marginPts) {
+                const returns = dailyReturnsFromEquityPoints(marginPts);
+                sharpe = annualizedSharpe(returns);
+                sharpeDays = returns.length + 1;
+                sharpeSource = 'account margin';
+            } else if (closePts) {
+                const returns = dailyReturnsFromEquityPoints(closePts);
+                sharpe = annualizedSharpe(returns);
+                sharpeDays = returns.length + 1;
+                sharpeSource = activeTabFilter === 'All'
+                    ? `close equity · ${enabledNote || 'enabled tabs'}`
+                    : `${activeTabFilter} closes`;
+            } else {
+                const returns = dailyReturnsFromTradeHistory(targetHist, data.notional_size);
+                sharpe = annualizedSharpe(returns);
+                sharpeDays = returns.length + 1;
+                sharpeSource = activeTabFilter === 'All'
+                    ? `daily trade PnL · ${enabledNote || 'enabled tabs'}`
+                    : 'daily trade PnL';
+            }
+
+            return {
+                mdd,
+                mddSource: marginPts ? 'account margin' : (closePts ? `strategy equity · ${enabledNote || 'enabled tabs'}` : null),
+                sharpe,
+                sharpeDays,
+                sharpeSource,
+            };
+        }
+
+        function strategyCapitalBasis(data, chartTotal) {
+            const tab = activeTabFilter;
+            const pnl = Number(chartTotal || 0);
+            if (tab !== 'All' && data.balances && data.balances[tab] != null) {
+                const bal = Number(data.balances[tab]);
+                if (Number.isFinite(bal)) {
+                    const start = bal - pnl;
+                    if (start > 0) {
+                        return { basis: start, label: `${tab} ledger start` };
+                    }
+                }
+            }
+            const notional = Number(data.notional_size || 10);
+            const maxPos = Number(data.max_positions_per_tab || 30);
+            const lev = Number(data.leverage || 5);
+            const cap = Math.max(notional * maxPos, notional, Number(data.margin_size || 2) * (lev > 0 ? lev : 5), 100);
+            if (tab === 'All' && data.balances) {
+                const enabled = enabledTabsForAll(data);
+                if (enabled.length) {
+                    if (!data.live_mode) {
+                        const tabStart = Number(data.initial_balance || 7000);
+                        const paperStart = tabStart * enabled.length;
+                        return { basis: paperStart, label: `Paper · ${formatMoney(tabStart)} × ${enabled.length} enabled tab(s)` };
+                    }
+                    const perTab = (data.pnl_summary || {}).per_tab || {};
+                    let ledgerBasis = 0;
+                    for (const t of enabled) {
+                        const bal = Number(data.balances[t]);
+                        if (!Number.isFinite(bal)) continue;
+                        const tabTotal = Number((perTab[t] || {}).total ?? 0);
+                        const start = bal - tabTotal;
+                        if (start > 0) ledgerBasis += start;
+                    }
+                    if (ledgerBasis > 0) {
+                        return { basis: ledgerBasis, label: `${enabled.length} enabled tab(s) ledger start` };
+                    }
+                    const notional = Number(data.notional_size || 10);
+                    const maxPos = Number(data.max_positions_per_tab || 30);
+                    const lev = Number(data.leverage || 5);
+                    const cap = Math.max(notional * maxPos, notional, Number(data.margin_size || 2) * (lev > 0 ? lev : 5), 100);
+                    return { basis: cap * enabled.length, label: `Deploy cap ~${formatMoney(cap)} × ${enabled.length} enabled` };
+                }
+                return { basis: 0, label: 'No enabled tabs' };
+            }
+            return { basis: cap, label: `Deploy cap ~${formatMoney(cap)}` };
+        }
+
+        function computeRoi(data, chartTotal) {
+            const pnl = Number(chartTotal || 0);
+            const { basis, label } = strategyCapitalBasis(data, chartTotal);
+            if (!(basis > 0)) return null;
+            return {
+                pct: (pnl / basis) * 100,
+                sub: `${label} · ${formatMoney(basis)} basis`,
+                mode: 'strategy',
+            };
+        }
+
+        function updateRiskMetricCards(data, targetHist, chartTotal) {
+            const mddEl = document.getElementById('mdd30Val');
+            const mddSubEl = document.getElementById('mdd30Sub');
+            const sharpeEl = document.getElementById('sharpeVal');
+            const sharpeSubEl = document.getElementById('sharpeSub');
+            const roiEl = document.getElementById('roiVal');
+            const roiSubEl = document.getElementById('roiSub');
+            if (!mddEl || !sharpeEl) return;
+
+            const metrics = computeRiskMetrics(data, targetHist, chartTotal);
+            if (metrics.mdd && Number.isFinite(metrics.mdd.pct)) {
+                const pct = metrics.mdd.pct;
+                mddEl.innerText = pct.toFixed(2) + '%';
+                mddEl.className = 'value ' + (pct > 0 ? 'red' : 'accent');
+                if (mddSubEl) {
+                    const src = metrics.mddSource || '30-day window';
+                    const usd = Number(metrics.mdd.usd || 0);
+                    mddSubEl.innerText = usd > 0.000001
+                        ? `${formatMoney(usd)} peak-to-trough · ${src}`
+                        : `No drawdown · ${src}`;
+                }
+            } else {
+                mddEl.innerText = '—';
+                mddEl.className = 'value';
+                if (mddSubEl) mddSubEl.innerText = 'Need 2+ points in 30D window';
+            }
+
+            if (metrics.sharpe !== null && Number.isFinite(metrics.sharpe)) {
+                const s = metrics.sharpe;
+                sharpeEl.innerText = s.toFixed(2);
+                sharpeEl.className = 'value ' + (s >= 1 ? 'green' : s > 0 ? 'accent' : 'red');
+                if (sharpeSubEl) {
+                    sharpeSubEl.innerText = `Annualized · ${metrics.sharpeDays} day(s) · ${metrics.sharpeSource}`;
+                }
+            } else {
+                sharpeEl.innerText = '—';
+                sharpeEl.className = 'value';
+                if (sharpeSubEl) sharpeSubEl.innerText = 'Need 2+ daily returns in 30D';
+            }
+
+            if (roiEl) {
+                const roi = computeRoi(data, chartTotal);
+                if (roi && Number.isFinite(roi.pct)) {
+                    const sign = roi.pct >= 0 ? '+' : '';
+                    roiEl.innerText = sign + roi.pct.toFixed(2) + '%';
+                    roiEl.className = 'value ' + (roi.pct > 0 ? 'green' : roi.pct < 0 ? 'red' : '');
+                    if (roiSubEl) roiSubEl.innerText = roi.sub || 'Return on capital';
+                } else {
+                    roiEl.innerText = '—';
+                    roiEl.className = 'value';
+                    if (roiSubEl) roiSubEl.innerText = 'Need capital basis';
+                }
+            }
+        }
+
+        function formatFundingBreakdownRow(data, stratTotals) {
+            if (!data.live_mode || !data.pnl_summary || !data.pnl_summary.account) {
+                return '';
+            }
+            const acct = data.pnl_summary.account;
+            const funding = Number(acct.funding || 0);
+            const closedExFunding = Number(acct.realized_pnl || 0) + Number(acct.commission || 0);
+            const totalReal = Number(acct.realized || 0);
+            const grossNet = Number.isFinite(acct.gross_net)
+                ? Number(acct.gross_net)
+                : (Number(acct.gross_profit || 0) - Number(acct.gross_loss || 0));
+            const stratNet = Number(stratTotals.grossWin || 0) - Number(stratTotals.grossLoss || 0);
+            const acctUnreal = Number.isFinite(Number(acct.unrealized))
+                ? Number(acct.unrealized)
+                : (exchangeUnrealizedTotal(data) ?? NaN);
+            const acctTotal = Number.isFinite(Number(acct.total))
+                ? Number(acct.total)
+                : (Number.isFinite(totalReal) && Number.isFinite(acctUnreal) ? totalReal + acctUnreal : NaN);
+            const stratVsAcct = Number.isFinite(acctTotal)
+                ? acctTotal - Number(stratTotals.total || 0)
+                : NaN;
+            const rec = (data.stats_meta && data.stats_meta.recovered) || {};
+            const recNet = Number(rec.net || 0);
+            const recText = Math.abs(recNet) > 0.000001
+                ? ` · <b>Recovered</b> (unmatched/manual income): ${signedMoney(recNet)} (${rec.trades || 0} closes)`
+                : '';
+            return `<tr class="strat-funding-row">
+                <td colspan="10">
+                    <strong>SUM breakdown:</strong>
+                    Strategy Profit − Loss: <b>${signedMoney(stratNet)}</b>
+                    (P ${signedMoney(stratTotals.grossWin)} − L ${signedMoney(stratTotals.grossLoss)})
+                    · Strategy total PnL: <b>${signedMoney(stratTotals.total)}</b>
+                    · <strong>Account</strong> (Binance): gross ${signedMoney(grossNet)}
+                    · Closed PnL + fees (ex-funding): ${signedMoney(closedExFunding)}
+                    · Funding: ${signedMoney(funding)}
+                    · Total realized: ${signedMoney(totalReal)}
+                    · Open unrealized: ${signedMoney(acctUnreal)}
+                    · Account total: ${signedMoney(acctTotal)}
+                    ${Math.abs(stratVsAcct) < 0.02 ? '' : ` · <span style="color:var(--down);">Δ strategy vs account ${signedMoney(stratVsAcct)}</span>`}
+                    ${recText}
+                </td>
+            </tr>`;
+        }
+
+        function updateStatsSourceLegend(data) {
+            const el = document.getElementById('statsSourceLegend');
+            if (!el) return;
+            const meta = data.stats_meta || {};
+            const days = meta.close_history_days || 90;
+            const src = meta.trade_counts || 'bot_history';
+            if (data.live_mode) {
+                el.innerHTML =
+                    '<strong>Sources (LIVE):</strong> '
+                    + `Win% = <b>${src}</b> (~${days}d, same as Recent Trades). `
+                    + 'Equity curve = cumulative <b>Profit − Loss</b> per strategy (from closes). '
+                    + 'Chart <b>Now</b> = Strategy table Profit − Loss + open unrealized. '
+                    + 'Total PnL / Profit / Loss = <b>Binance income</b> per tab when ON, open, or has closes in ~'
+                    + days + 'd; <b>OFF + idle</b> rows use close window only (no lifetime income). '
+                    + 'SUM Profit/Loss/Total = <b>sum of strategy rows</b> (account totals in breakdown row below). '
+                    + 'Funding split below. '
+                    + '<b>Recovered</b> = income/closes not matched to a strategy tab. '
+                    + 'Ledger ≠ wallet equity.';
+            } else {
+                el.innerHTML =
+                    '<strong>Sources (PAPER):</strong> All stats from simulated bot history (fees/slippage model).';
+            }
+        }
+
+        function positionUnrealizedPnl(posKey, pos, data, liveAllocation) {
+            if (liveAllocation && liveAllocation[posKey]) {
+                return liveAllocation[posKey].pnl;
+            }
+            if (data.live_mode && data.exchange_account && Array.isArray(data.exchange_account.positions)) {
+                const matchSide = pos.side === 'Long' ? 'Long' : 'Short';
+                const groupKey = `${pos.symbol}__${pos.side}`;
+                const groupedBotQty = {};
+                for (const [, p] of Object.entries(data.open_positions || {})) {
+                    const gk = `${p.symbol}__${p.side}`;
+                    groupedBotQty[gk] = (groupedBotQty[gk] || 0) + (Number(p.qty) || 0);
+                }
+                const eaPos = data.exchange_account.positions.find(
+                    x => x.symbol === pos.symbol && x.side === matchSide
+                );
+                if (eaPos) {
+                    const legUr = Number(eaPos.unrealizedProfit) || 0;
+                    const groupQty = groupedBotQty[groupKey] || 0;
+                    const qty = Number(pos.qty) || 0;
+                    return groupQty > 0 ? legUr * (qty / groupQty) : legUr;
+                }
+            }
+            const livePrice = (data.latest_prices || {})[posKey] ?? (data.live_prices || {})[pos.symbol];
+            return positionOpenPnl(pos, livePrice);
+        }
+
+        function updateSidePnlCards(data, targetHist) {
+            const sidePnl = {
+                Long: {realized: 0, unrealized: 0},
+                Short: {realized: 0, unrealized: 0}
+            };
+
+            for (const trade of targetHist || []) {
+                const side = trade.side === 'Short' ? 'Short' : trade.side === 'Long' ? 'Long' : null;
+                if (!side) continue;
+                sidePnl[side].realized += Number(trade.pnl_usd || 0);
+            }
+
+            const liveAllTabs = !!(data.live_mode && activeTabFilter === 'All'
+                && data.exchange_account && Array.isArray(data.exchange_account.positions));
+            if (liveAllTabs) {
+                for (const eaPos of data.exchange_account.positions) {
+                    const side = eaPos.side === 'Short' ? 'Short' : eaPos.side === 'Long' ? 'Long' : null;
+                    if (!side) continue;
+                    sidePnl[side].unrealized += Number(eaPos.unrealizedProfit) || 0;
+                }
+            } else {
+                const liveAllocation = buildLivePnlAllocation(data);
+                for (const [posKey, pos] of Object.entries(data.open_positions || {})) {
+                    if (activeTabFilter !== 'All' && pos.tab !== activeTabFilter) continue;
+                    const side = pos.side === 'Short' ? 'Short' : pos.side === 'Long' ? 'Long' : null;
+                    if (!side) continue;
+                    sidePnl[side].unrealized += positionUnrealizedPnl(posKey, pos, data, liveAllocation);
+                }
+            }
+
+            const applyCard = (side, valId, subId) => {
+                const realized = sidePnl[side].realized;
+                const unrealized = sidePnl[side].unrealized;
+                const total = realized + unrealized;
+                const el = document.getElementById(valId);
+                const sub = document.getElementById(subId);
+                if (!el || !sub) return;
+                el.innerText = (total >= 0 ? '+' : '') + formatMoney(total);
+                el.className = 'value ' + (total > 0 ? 'green' : total < 0 ? 'red' : '');
+                const closedLabel = data.live_mode ? 'closed (bot)' : 'realized';
+                const openLabel = liveAllTabs ? 'open (Binance)' : 'open';
+                sub.innerText = `${formatMoney(realized)} ${closedLabel} · ${formatMoney(unrealized)} ${openLabel}`;
+            };
+            applyCard('Long', 'longPnlVal', 'longPnlSubtext');
+            applyCard('Short', 'shortPnlVal', 'shortPnlSubtext');
+        }
+
+        // Per-tab ON/OFF switches
+        const TAB_LIST = ['Tab1','Tab2','Tab3','Tab4','Tab5','Tab6','Tab7','Tab8','Tab9','Tab10','Tab11','Tab12','Tab13','Tab14','Tab15','Tab16','Tab17','Tab18'];
+        const HIDE_INACTIVE_STORAGE_KEY = 'hideInactiveTabs';
+        let inactiveDrawerExpanded = false;
+
+        function hideInactiveTabsEnabled() {
+            try {
+                return localStorage.getItem(HIDE_INACTIVE_STORAGE_KEY) !== 'false';
+            } catch {
+                return true;
+            }
+        }
+
+        function setHideInactiveTabs(on) {
+            try {
+                localStorage.setItem(HIDE_INACTIVE_STORAGE_KEY, on ? 'true' : 'false');
+            } catch { /* private mode / storage blocked */ }
+            renderHideInactiveToggle();
+            if (window.lastDataPayload) updateDashboard(window.lastDataPayload);
+        }
+
+        function renderHideInactiveToggle() {
+            const el = document.getElementById('hideInactiveToggle');
+            if (!el) return;
+            const cb = el.querySelector('input[type="checkbox"]');
+            if (cb) cb.checked = hideInactiveTabsEnabled();
+        }
+
+        function buildTabOpenCounts(data) {
+            const counts = {};
+            for (const p of Object.values(data.open_positions || {})) {
+                const tab = p.tab;
+                if (tab) counts[tab] = (counts[tab] || 0) + 1;
+            }
+            return counts;
+        }
+
+        function isTabDashboardVisible(tab, data, openCounts, hideInactive) {
+            if (tab === 'SafeGuard' || tab === 'Recovered') return true;
+            if (!hideInactive) return true;
+            const on = (data.tab_enabled || {})[tab] === true;
+            const open = openCounts[tab] || 0;
+            return on || open > 0;
+        }
+
+        function idleOffTabs(data, openCounts) {
+            return TAB_LIST.filter(tab => {
+                const on = (data.tab_enabled || {})[tab] === true;
+                const open = openCounts[tab] || 0;
+                return !on && open === 0;
+            });
+        }
+
+        function countEnabledTabs(data) {
+            return TAB_LIST.filter(tab => (data.tab_enabled || {})[tab] === true).length;
+        }
+
+        function ensureActiveTabFilterVisible(data, openCounts) {
+            if (activeTabFilter === 'All') return;
+            if (!isTabDashboardVisible(activeTabFilter, data, openCounts, hideInactiveTabsEnabled())) {
+                activeTabFilter = 'All';
+                document.querySelectorAll('.tab-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.filter === 'All');
+                });
+                const descEl = document.getElementById('strategy-desc');
+                if (descEl) descEl.innerHTML = strategyDescriptions['All'];
+            }
+        }
+
+        function syncTabBarVisibility(data, openCounts) {
+            const hideInactive = hideInactiveTabsEnabled();
+            document.querySelectorAll('.tab-btn[data-filter]').forEach(btn => {
+                const filter = btn.dataset.filter;
+                if (filter === 'All') {
+                    btn.style.display = '';
+                    btn.textContent = `🌐 All · ${countEnabledTabs(data)} ON`;
+                    return;
+                }
+                const visible = isTabDashboardVisible(filter, data, openCounts, hideInactive);
+                btn.style.display = visible ? '' : 'none';
+            });
+        }
+
+        function toggleInactiveDrawer() {
+            inactiveDrawerExpanded = !inactiveDrawerExpanded;
+            const body = document.getElementById('inactiveTabsDrawerBody');
+            const toggle = document.getElementById('inactiveTabsDrawerToggle');
+            if (body) body.style.display = inactiveDrawerExpanded ? '' : 'none';
+            if (toggle) toggle.textContent = inactiveDrawerExpanded ? '▾' : '▸';
+        }
+
+        function renderInactiveDrawer(data, openCounts) {
+            const drawer = document.getElementById('inactiveTabsDrawer');
+            if (!drawer) return;
+            const idle = hideInactiveTabsEnabled() ? idleOffTabs(data, openCounts) : [];
+            if (idle.length === 0) {
+                drawer.style.display = 'none';
+                inactiveDrawerExpanded = false;
+                return;
+            }
+            drawer.style.display = '';
+            const countEl = document.getElementById('inactiveTabsCount');
+            if (countEl) countEl.textContent = String(idle.length);
+            const body = document.getElementById('inactiveTabsDrawerBody');
+            if (!body) return;
+            let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:var(--text-muted);font-size:10px;text-transform:uppercase;"><th style="text-align:left;padding:4px 8px;">Strategy</th><th style="text-align:center;padding:4px 8px;">TF</th><th style="text-align:center;padding:4px 8px;">Signal</th></tr></thead><tbody>';
+            for (const tab of idle) {
+                const tfRaw = (data.tab_timeframes && data.tab_timeframes[tab]) || '';
+                const tfText = tfRaw ? String(tfRaw).toUpperCase() : '—';
+                const label = strategyTableLabel(tab);
+                const labelTitle = strategyDisplayLabel(tab);
+                const tabOn = (data.tab_enabled || {})[tab] === true;
+                html += `<tr style="border-bottom:1px solid #21262d;">
+                    <td style="padding:5px 8px;font-weight:600;" title="${escapeHtml(labelTitle)}">${escapeHtml(label)}</td>
+                    <td style="text-align:center;padding:5px 8px;color:var(--accent);font-size:10px;font-weight:800;">${escapeHtml(tfText)}</td>
+                    <td style="text-align:center;padding:5px 8px;">${strategyTabSwitchHtml(tab, tabOn)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            body.innerHTML = html;
+            body.style.display = inactiveDrawerExpanded ? '' : 'none';
+            const toggle = document.getElementById('inactiveTabsDrawerToggle');
+            if (toggle) toggle.textContent = inactiveDrawerExpanded ? '▾' : '▸';
+        }
+
+        function strategyTabSwitchStyle(on) {
+            return on
+                ? 'background:rgba(63,185,80,0.18);color:var(--up);border-color:rgba(63,185,80,0.45);'
+                : 'background:rgba(248,81,73,0.18);color:var(--down);border-color:rgba(248,81,73,0.45);';
+        }
+        function strategyTabSwitchHtml(tab, tabOn) {
+            return `<button type="button" class="sig-switch" style="${strategyTabSwitchStyle(tabOn)}" onclick="toggleTabEnabled('${tab}', ${!tabOn}); event.stopPropagation();">${tabOn ? 'ON' : 'OFF'}</button>`;
+        }
+        async function toggleTabEnabled(tab, enabled) {
+            try {
+                const r = await fetch('/api/tab-enabled', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab, enabled })
+                });
+                if (!r.ok) console.warn('tab toggle failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        async function setAllTabsEnabled(enabled) {
+            try {
+                const r = await fetch('/api/tabs-enabled-all', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                if (!r.ok) {
+                    showToast('Failed to update tabs: ' + (await r.text()), 'Error');
+                    return;
+                }
+                showToast(`All strategy tabs turned ${enabled ? 'ON' : 'OFF'}.`, 'Tab Switches');
+            } catch (e) {
+                showToast('Failed to update tabs: ' + e, 'Error');
+            }
+        }
+        async function setLongShortBalanceMode(mode) {
+            try {
+                const r = await fetch('/api/long-short-balance', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode})
+                });
+                if (!r.ok) console.warn('long/short balance mode failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        function renderLongShortBalanceSwitch(mode) {
+            const current = ['nearly', 'cap', 'off'].includes(mode) ? mode : 'off';
+            document.querySelectorAll('[data-balance-mode]').forEach(btn => {
+                const on = btn.dataset.balanceMode === current;
+                btn.style.background = on ? 'rgba(63,185,80,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? 'var(--up)' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(63,185,80,0.45)' : 'var(--glass-border)';
+                btn.onclick = () => setLongShortBalanceMode(btn.dataset.balanceMode);
+            });
+        }
+        async function setTradeSideMode(mode) {
+            try {
+                const r = await fetch('/api/trade-side-mode', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode})
+                });
+                if (!r.ok) console.warn('trade side mode failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        function renderTradeSideSwitch(mode) {
+            const current = ['both', 'long_only', 'short_only'].includes(mode) ? mode : 'both';
+            document.querySelectorAll('[data-trade-side-mode]').forEach(btn => {
+                const on = btn.dataset.tradeSideMode === current;
+                btn.style.background = on ? 'rgba(88,166,255,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? 'var(--accent)' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(88,166,255,0.48)' : 'var(--glass-border)';
+                btn.onclick = () => setTradeSideMode(btn.dataset.tradeSideMode);
+            });
+        }
+        async function setSymbolFilterMode(tab, mode) {
+            if (!tab || tab === 'All') return;
+            try {
+                const r = await fetch('/api/symbol-filter', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab, mode })
+                });
+                if (!r.ok) {
+                    showToast('Symbol filter failed: ' + (await r.text()), 'Error');
+                    return;
+                }
+                const data = await r.json();
+                showToast(
+                    `${strategyLabel(tab)} filter → ${mode}` +
+                    (data.auto_winner_count != null ? ` (${data.auto_winner_count} auto winners)` : ''),
+                    'Symbol Filter'
+                );
+            } catch (e) { showToast('Symbol filter failed: ' + e, 'Error'); }
+        }
+        async function applySymbolWinners(tab) {
+            if (!tab || tab === 'All') return;
+            try {
+                const r = await fetch('/api/symbol-allowlist', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab, action: 'apply_auto_winners' })
+                });
+                if (!r.ok) {
+                    showToast('Apply winners failed: ' + (await r.text()), 'Error');
+                    return;
+                }
+                const data = await r.json();
+                showToast(`${strategyLabel(tab)}: ${(data.symbols || []).length} symbols in allowlist`, 'Symbol Filter');
+            } catch (e) { showToast('Apply winners failed: ' + e, 'Error'); }
+        }
+        async function clearSymbolAllowlist(tab) {
+            if (!tab || tab === 'All') return;
+            try {
+                const r = await fetch('/api/symbol-allowlist', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab, action: 'clear' })
+                });
+                if (!r.ok) console.warn('clear allowlist failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        function renderSymbolFilterSwitch(tab, filterRow, allowlist, rollingWindow) {
+            const mode = (filterRow && filterRow.mode) || 'off';
+            const winN = Math.max(1, Number(rollingWindow) || 30);
+            document.querySelectorAll('[data-symbol-filter-mode]').forEach(btn => {
+                const on = btn.dataset.symbolFilterMode === mode;
+                btn.style.background = on ? 'rgba(63,185,80,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? 'var(--up)' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(63,185,80,0.45)' : 'var(--glass-border)';
+                btn.onclick = () => setSymbolFilterMode(tab, btn.dataset.symbolFilterMode);
+            });
+            const hint = document.getElementById('symbolFilterHint');
+            if (hint && filterRow) {
+                const wr = Math.round((Number(filterRow.min_win_rate) || 0) * 100);
+                const pnl = Number(filterRow.min_net_pnl) || 0;
+                const trades = Number(filterRow.min_trades) || 5;
+                const allowN = Array.isArray(allowlist) ? allowlist.length : 0;
+                hint.textContent = mode === 'off'
+                    ? `No symbol filter — all scanned symbols eligible. Stats: last ${winN} trades/symbol.`
+                    : mode === 'auto_winners'
+                        ? `Auto (last ${winN}/symbol): ≥${trades} trades · WR≥${wr}% · net≥$${pnl.toFixed(2)}`
+                        : `Allowlist: ${allowN} symbol(s) · stats last ${winN}/symbol`;
+            }
+            const applyBtn = document.getElementById('symbolApplyWinnersBtn');
+            const clearBtn = document.getElementById('symbolClearAllowlistBtn');
+            if (applyBtn) applyBtn.onclick = () => applySymbolWinners(tab);
+            if (clearBtn) clearBtn.onclick = () => clearSymbolAllowlist(tab);
+        }
+        function symbolLeaderboardRowsHtml(rows, emptyMsg) {
+            if (!rows.length) {
+                return `<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:1.5rem;">${emptyMsg}</td></tr>`;
+            }
+            let html = '';
+            for (const row of rows) {
+                const wr = Math.round((Number(row.win_rate) || 0) * 100);
+                const net = Number(row.net_pnl) || 0;
+                const netColor = net >= 0 ? 'var(--up)' : 'var(--down)';
+                const pass = row.passes_filter ? '✓' : '—';
+                const passColor = row.passes_filter ? 'var(--up)' : 'var(--text-muted)';
+                html += `
+                    <tr>
+                        <td style="font-weight:600;">${symbolLink(row.symbol)}</td>
+                        <td style="text-align:right;">${row.trades}</td>
+                        <td style="text-align:right;">${wr}%</td>
+                        <td><span class="badge ${row.dominant_side}">${row.dominant_side}</span></td>
+                        <td style="text-align:right;font-weight:700;color:${netColor};">${net >= 0 ? '+' : ''}${formatMoney(net)}</td>
+                        <td style="text-align:center;color:${passColor};font-weight:700;">${pass}</td>
+                    </tr>`;
+            }
+            return html;
+        }
+        function renderSymbolLeaderboard(data, tab) {
+            const panel = document.getElementById('symbolLeaderboardPanel');
+            const profitBody = document.getElementById('symbolLeaderboardProfitBody');
+            const lossBody = document.getElementById('symbolLeaderboardLossBody');
+            const tabLbl = document.getElementById('symbolLeaderboardTab');
+            const winLbl = document.getElementById('symbolLeaderboardWindow');
+            if (!panel || !profitBody || !lossBody) return;
+            const rollingWindow = Math.max(1, Number(data.symbol_filter_rolling_window) || 30);
+            if (!tab || tab === 'All') {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = '';
+            if (tabLbl) tabLbl.textContent = `· ${strategyLabel(tab)}`;
+            if (winLbl) winLbl.textContent = `· last ${rollingWindow} trades/symbol`;
+            const filterRow = (data.symbol_filter_by_tab || {})[tab] || {};
+            const allowlist = ((data.symbol_allowlist_by_tab || {})[tab]) || [];
+            renderSymbolFilterSwitch(tab, filterRow, allowlist, rollingWindow);
+            const board = ((data.symbol_leaderboard || {})[tab]) || {};
+            const profitRows = board.top_profit || [];
+            const lossRows = board.top_loss || [];
+            const emptyMsg = 'No closed trades for this tab yet';
+            if (!profitRows.length && !lossRows.length) {
+                profitBody.innerHTML = symbolLeaderboardRowsHtml([], emptyMsg);
+                lossBody.innerHTML = symbolLeaderboardRowsHtml([], emptyMsg);
+                return;
+            }
+            profitBody.innerHTML = symbolLeaderboardRowsHtml(
+                profitRows,
+                'No profitable symbols yet'
+            );
+            lossBody.innerHTML = symbolLeaderboardRowsHtml(
+                lossRows,
+                'No losing symbols yet'
+            );
+        }
+        const SLTP_MODE_CONFIRM = {
+            local: 'Switch to Local?\n\nBot manages SL+TP by mark price. Open positions migrate on next sync (exchange algos cancelled).\n\nบอทจัดการ SL+TP ทั้งคู่ — sync ถัดไปจะยกเลิก algo บน Binance',
+            binance: 'Switch to Binance?\n\nNew entries place STOP+TP algo on the exchange. Open positions repaired on sync.\n\nวาง SL+TP algo บน Binance (mainnet cap ~200)',
+            hybrid: 'Switch to Hybrid?\n\nSL on Binance; TP managed locally. Needs ≥1 free algo slot per entry.\n\nSL บน Binance / TP บอทจัดการ — ต้องมี slot algo ≥1',
+            binance_fallback: 'Switch to Fallback?\n\nUses Binance SL+TP when ≥2 algo slots free; otherwise local both (not hybrid).\n\nใช้ Binance เมื่อมี slot ≥2 ไม่งั้น local ทั้งคู่',
+        };
+
+        async function setSltpMode(mode) {
+            const next = String(mode || '').toLowerCase();
+            const current = String(window.lastDataPayload?.sltp_mode || 'binance').toLowerCase();
+            if (!SLTP_MODE_DESCRIPTIONS[next] || next === current) return;
+            if (!confirm(SLTP_MODE_CONFIRM[next] || `Switch SL/TP mode to ${next}?`)) return;
+            try {
+                const r = await fetch('/api/sltp-mode', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: next })
+                });
+                if (!r.ok) {
+                    showToast('Failed to update SL/TP mode: ' + (await r.text()), 'Error');
+                    return;
+                }
+                showToast(`SL/TP mode: ${next}`, 'SL/TP Mode');
+            } catch (e) {
+                showToast('Failed to update SL/TP mode: ' + e, 'Error');
+            }
+        }
+        function renderSltpModeSwitch(data) {
+            const panel = document.getElementById('sltp-mode-switches');
+            if (!panel) return;
+            if (!data?.live_mode) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'flex';
+            const current = String(data.sltp_mode || (data.local_sltp ? 'local' : 'binance')).toLowerCase();
+            const descEl = document.getElementById('sltp-mode-desc');
+            const capEl = document.getElementById('sltp-algo-cap');
+            if (descEl) {
+                const en = SLTP_MODE_DESCRIPTIONS[current] || '';
+                const th = SLTP_MODE_DESCRIPTIONS_TH[current] || '';
+                descEl.textContent = th ? `${en} — ${th}` : en;
+            }
+            if (capEl) {
+                const used = data.algo_orders_used;
+                const max = data.algo_orders_max;
+                capEl.textContent = (used != null && max != null) ? `Algo orders: ${used}/${max}` : '';
+            }
+            document.querySelectorAll('[data-sltp-mode]').forEach(btn => {
+                const on = btn.dataset.sltpMode === current;
+                btn.style.background = on ? 'rgba(227,179,65,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? '#e3b341' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(227,179,65,0.45)' : 'var(--glass-border)';
+                btn.title = SLTP_MODE_DESCRIPTIONS_TH[btn.dataset.sltpMode] || '';
+                btn.onclick = () => setSltpMode(btn.dataset.sltpMode);
+            });
+        }
+        async function setSymbolScanLimit(value, tab) {
+            try {
+                const body = { value: Number(value) };
+                if (tab) body.tab = tab;
+                const r = await fetch('/api/symbol-scan-limit', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!r.ok) console.warn('symbol scan limit failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        const SYMBOL_SCAN_VALUES = ['100', '200', '300', '400', '500'];
+        function _paintScanButtons(selector, dataAttr, current, onClick) {
+            const active = SYMBOL_SCAN_VALUES.includes(String(current)) ? String(current) : '100';
+            document.querySelectorAll(selector).forEach(btn => {
+                const val = btn.dataset[dataAttr];
+                const on = val === active;
+                btn.style.background = on ? 'rgba(56,189,248,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? '#38bdf8' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(56,189,248,0.45)' : 'var(--glass-border)';
+                btn.onclick = () => onClick(val);
+            });
+        }
+        function renderSymbolScanSwitch(limit, count, byTab) {
+            const global = SYMBOL_SCAN_VALUES.includes(String(limit)) ? String(limit) : '100';
+            _paintScanButtons('[data-symbol-scan]', 'symbolScan', global, (v) => setSymbolScanLimit(v));
+            const el = document.getElementById('symbol-scan-count');
+            if (el) {
+                const n = Number(count);
+                el.textContent = Number.isFinite(n) && n > 0 ? `(${n} loaded)` : '';
+            }
+        }
+        async function setMaxPositions(value) {
+            try {
+                const r = await fetch('/api/max-positions', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({value: Number(value)})
+                });
+                if (!r.ok) console.warn('max positions failed', await r.text());
+            } catch (e) { console.warn(e); }
+        }
+        function renderMaxPositionsSwitch(value) {
+            const current = [10, 20, 30, 40, 50, 60, 70, 80].includes(Number(value)) ? String(value) : '30';
+            document.querySelectorAll('[data-max-positions]').forEach(btn => {
+                const on = btn.dataset.maxPositions === current;
+                btn.style.background = on ? 'rgba(210,153,34,0.18)' : 'rgba(48,54,61,0.42)';
+                btn.style.color = on ? '#d29922' : 'var(--text-dim)';
+                btn.style.borderColor = on ? 'rgba(210,153,34,0.45)' : 'var(--glass-border)';
+                btn.onclick = () => setMaxPositions(btn.dataset.maxPositions);
+            });
+        }
+        function renderSizingSummary(data) {
+            const el = document.getElementById('sizing-summary');
+            if (!el) return;
+            const margin = Number(data.margin_size);
+            const leverage = Number(data.leverage);
+            const notional = Number(data.notional_size);
+            if (!Number.isFinite(margin) || !Number.isFinite(leverage) || !Number.isFinite(notional)) {
+                el.textContent = '—';
+                return;
+            }
+            el.textContent =
+                `$${notional.toLocaleString('en-US', {maximumFractionDigits: 2})} notional`
+                + ` · $${margin.toLocaleString('en-US', {maximumFractionDigits: 2})} margin`
+                + ` · ${leverage}x leverage`;
+        }
+
+        function formatMarketPrice(price) {
+            if (!Number.isFinite(price) || price <= 0) return '—';
+            return '$' + price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function flashMarketCard(cardId, direction) {
+            const card = document.getElementById(cardId);
+            if (!card) return;
+            card.classList.remove('tick-up', 'tick-down');
+            void card.offsetWidth;
+            card.classList.add(direction === 'up' ? 'tick-up' : 'tick-down');
+            clearTimeout(_marketTickTimers[cardId]);
+            _marketTickTimers[cardId] = setTimeout(() => card.classList.remove('tick-up', 'tick-down'), 700);
+        }
+
+        function setMarketTrend(trendId, direction) {
+            const el = document.getElementById(trendId);
+            if (!el) return;
+            if (!direction) {
+                el.textContent = '';
+                el.className = 'market-trend';
+                return;
+            }
+            el.textContent = direction === 'up' ? '▲ up' : '▼ down';
+            el.className = 'market-trend show ' + direction;
+        }
+
+        function updateMarketPrices(data) {
+            const prices = data.market_prices || {};
+            const rows = [
+                ['BTCUSDT', 'btcCardPriceVal', 'btcMarketCard', 'btcCardTrend'],
+                ['ETHUSDT', 'ethCardPriceVal', 'ethMarketCard', 'ethCardTrend'],
+                ['XAUUSDT', 'goldCardPriceVal', 'goldMarketCard', 'goldCardTrend'],
+                ['CLUSDT', 'oilCardPriceVal', 'oilMarketCard', 'oilCardTrend'],
+            ];
+            for (const [symbol, priceId, cardId, trendId] of rows) {
+                const el = document.getElementById(priceId);
+                if (!el) continue;
+                const num = Number(prices[symbol]);
+                if (!Number.isFinite(num) || num <= 0) {
+                    el.textContent = '—';
+                    el.className = 'market-price';
+                    setMarketTrend(trendId, null);
+                    continue;
+                }
+                const prev = lastMarketPrices[symbol];
+                el.textContent = formatMarketPrice(num);
+                if (prev !== null && num !== prev) {
+                    const direction = num > prev ? 'up' : 'down';
+                    el.className = 'market-price ' + (direction === 'up' ? 'green' : 'red');
+                    flashMarketCard(cardId, direction);
+                    setMarketTrend(trendId, direction);
+                } else {
+                    el.className = 'market-price';
+                }
+                lastMarketPrices[symbol] = num;
+            }
+        }
+
+        function updatePionexBalanceCard(data) {
+            const card = document.getElementById('pionexBalanceCard');
+            const valEl = document.getElementById('pionexTotalUsdtVal');
+            const thbEl = document.getElementById('pionexBalanceThb');
+            const subEl = document.getElementById('pionexBalanceSub');
+            if (!card || !valEl || !subEl) return;
+            const pb = data.pionex_balance;
+            if (!pb || !pb.configured) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = 'block';
+            if (!pb.ok) {
+                valEl.innerText = '—';
+                valEl.className = 'value';
+                if (thbEl) thbEl.style.display = 'none';
+                subEl.innerText = pb.error ? String(pb.error).slice(0, 80) : 'Pionex error';
+                subEl.style.color = 'var(--down)';
+                return;
+            }
+            subEl.style.color = '';
+            valEl.innerText = formatMoney(Number(pb.total_in_usdt) || 0);
+            valEl.className = 'value accent';
+            if (thbEl) {
+                const thb = Number(pb.total_in_thb);
+                if (Number.isFinite(thb) && thb > 0) {
+                    thbEl.style.display = 'block';
+                    thbEl.innerText = thb.toLocaleString('th-TH', {
+                        style: 'currency',
+                        currency: 'THB',
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    });
+                } else {
+                    thbEl.style.display = 'none';
+                }
+            }
+            const parts = [];
+            const btc = Number(pb.total_in_btc);
+            if (Number.isFinite(btc)) parts.push(`≈ ${btc.toFixed(6)} BTC`);
+            const bot = Number(pb.bot_account_usdt);
+            const trader = Number(pb.trader_account_usdt);
+            if (Number.isFinite(bot)) parts.push(`Bot ${formatMoney(bot)}`);
+            if (Number.isFinite(trader)) parts.push(`Futures ${formatMoney(trader)}`);
+            subEl.innerText = parts.length ? parts.join(' · ') : 'Wallet full';
+        }
+
+        function updateDashboard(data) {
+            const wsFull = isWsFullPayload(data);
+            const tabOpenCounts = buildTabOpenCounts(data);
+            ensureActiveTabFilterVisible(data, tabOpenCounts);
+            updateDocumentTitle(data);
+            updateFundingFeeCard(data);
+            updateTradingFeeCard(data);
+            updateMarketPrices(data);
+            updatePionexBalanceCard(data);
+            if (wsFull) {
+            renderHideInactiveToggle();
+            renderTpBeepSwitch();
+            renderLongShortBalanceSwitch(data.long_short_balance_mode || 'off');
+            renderTradeSideSwitch(data.trade_side_mode || 'both');
+            renderSltpModeSwitch(data);
+            renderSymbolScanSwitch(
+                data.symbol_scan_limit ?? 100,
+                data.symbol_scan_count,
+                data.symbol_scan_limit_by_tab || {}
+            );
+            renderMaxPositionsSwitch(data.max_positions_per_tab ?? 30);
+            renderSizingSummary(data);
+            }
+            // Mode badge: PAPER / TESTNET / LIVE
+            const badge = document.getElementById('modeBadge');
+            const dot   = document.getElementById('headerDot');
+            if (data.live_mode) {
+                if (data.testnet) {
+                    badge.textContent = 'TESTNET';
+                    badge.style.borderColor = '#e3b341';
+                    badge.style.color = '#e3b341';
+                    dot.style.background = '#e3b341';
+                    dot.style.boxShadow = '0 0 10px #e3b341';
+                } else {
+                    badge.textContent = 'LIVE';
+                    badge.style.borderColor = 'var(--down)';
+                    badge.style.color = 'var(--down)';
+                    dot.style.background = 'var(--down)';
+                    dot.style.boxShadow = '0 0 10px var(--down)';
+                }
+            } else {
+                badge.textContent = 'PAPER';
+                badge.style.borderColor = 'var(--accent)';
+                badge.style.color = 'var(--accent)';
+                dot.style.background = 'var(--up)';
+                dot.style.boxShadow = '0 0 10px var(--up)';
+            }
+
+            updateLiveStatus(data);
+            renderApiBanBanner(data);
+            renderSyncIssues(data);
+            renderHealthMonitor(data);
+            const protectionOpts = { sltp_mode: data.sltp_mode || (data.local_sltp ? 'local' : 'binance'), testnet: !!data.testnet };
+            const filteredOpenPositions = Object.values(data.open_positions || {}).filter(
+                p => activeTabFilter === 'All' || p.tab === activeTabFilter
+            );
+            const openLongCount = filteredOpenPositions.filter(p => p.side === 'Long').length;
+            const openShortCount = filteredOpenPositions.filter(p => p.side === 'Short').length;
+            const openLsEl = document.getElementById('openLongShortVal');
+            openLsEl.innerText = `${openLongCount} / ${openShortCount}`;
+            openLsEl.className = 'value ' + (
+                openLongCount === openShortCount ? 'accent' :
+                openLongCount > openShortCount ? 'green' : 'red'
+            );
+            const openLsSubEl = document.getElementById('openLongShortSub');
+            if (openLsSubEl) {
+                openLsSubEl.innerText = activeTabFilter === 'All'
+                    ? 'All tabs Long / Short'
+                    : `${activeTabFilter} Long / Short`;
+            }
+            const maxPosCap = Number(data.max_positions_per_tab || 30);
+            const openMaxEl = document.getElementById('openMaxVal');
+            const openMaxSubEl = document.getElementById('openMaxSub');
+            if (openMaxEl) {
+                const openCount = filteredOpenPositions.length;
+                openMaxEl.innerText = `${openCount} / ${maxPosCap}`;
+                openMaxEl.className = 'value ' + (
+                    openCount >= maxPosCap ? 'red' :
+                    openCount >= maxPosCap - 2 ? 'accent' : 'green'
+                );
+            }
+            if (openMaxSubEl) {
+                openMaxSubEl.innerText = activeTabFilter === 'All'
+                    ? `Max ${maxPosCap} per tab`
+                    : `${activeTabFilter} · max ${maxPosCap}`;
+            }
+            if (!IS_MOBILE_LITE && wsFull && !_binanceTradesInited && data.live_mode) {
+                _binanceTradesInited = true;
+                initBinanceTrades(true);
+            }
+            if (!IS_MOBILE_LITE && wsFull && data.live_mode && Array.isArray(data.binance_api_trades) && data.binance_api_trades.length) {
+                renderBinanceTradesTable(data.binance_api_trades, 'WS cache');
+            }
+
+            // Exchange Account Panel
+            const exPanel = document.getElementById('exchangePanel');
+            const exPosPanel = document.getElementById('exchangePosPanel');
+            if (data.live_mode && data.exchange_account && Array.isArray(data.exchange_account.positions)) {
+                exPanel.style.display = 'flex';
+                // exPosPanel visibility is controlled by renderTables based on activeTabFilter
+                const ea = data.exchange_account;
+                const livePrices = data.live_prices || {};
+                // margin_history comes from server — no client-side sampling needed
+
+                document.getElementById('exAvailableVal').innerText  = formatMoney(ea.availableBalance);
+                document.getElementById('exMarginVal').innerText     = formatMoney(ea.marginBalance);
+
+                let exUrLong = 0, exUrShort = 0, exCntLong = 0, exCntShort = 0;
+                for (const p of ea.positions) {
+                    const ur = Number(p.unrealizedProfit) || 0;
+                    if (p.side === 'Long') { exUrLong += ur; exCntLong += 1; }
+                    else if (p.side === 'Short') { exUrShort += ur; exCntShort += 1; }
+                }
+                const applyExUrLine = (valId, ur) => {
+                    const el = document.getElementById(valId);
+                    if (!el) return;
+                    el.innerText = (ur >= 0 ? '+' : '') + formatMoney(ur);
+                    el.className = 'ur-split-val ' + (ur > 0 ? 'green' : ur < 0 ? 'red' : '');
+                };
+                applyExUrLine('exUrPnlLongVal', exUrLong);
+                applyExUrLine('exUrPnlShortVal', exUrShort);
+                const exUrSub = document.getElementById('exUrPnlSub');
+                if (exUrSub) {
+                    const totalUr = Number(ea.unrealizedProfit) || (exUrLong + exUrShort);
+                    const totalText = (totalUr >= 0 ? '+' : '') + formatMoney(totalUr);
+                    const cntParts = [];
+                    if (exCntLong) cntParts.push(`${exCntLong}L`);
+                    if (exCntShort) cntParts.push(`${exCntShort}S`);
+                    const cntLabel = cntParts.length ? cntParts.join(' · ') + ' · ' : '';
+                    exUrSub.innerText = `Total ${totalText} · ${cntLabel}Mark price`;
+                }
+
+                const todayProfit = ea.today_profit || (data.pnl_summary && data.pnl_summary.account && data.pnl_summary.account.today);
+                const todayEl = document.getElementById('exTodayProfitVal');
+                const todaySubEl = document.getElementById('exTodayProfitSub');
+                if (todayProfit && todayEl) {
+                    const todayNet = Number(todayProfit.net || 0);
+                    todayEl.innerText = (todayNet >= 0 ? '+' : '') + formatMoney(todayNet);
+                    todayEl.className = 'value ' + (todayNet > 0 ? 'green' : todayNet < 0 ? 'red' : '');
+                    if (todaySubEl) {
+                        todaySubEl.innerText =
+                            `Realized ${formatMoney(todayProfit.realized_pnl)} · Fee ${formatMoney(todayProfit.commission)} · Funding ${formatMoney(todayProfit.funding)}`;
+                    }
+                } else if (todayEl) {
+                    todayEl.innerText = '—';
+                    todayEl.className = 'value';
+                    if (todaySubEl) todaySubEl.innerText = 'Binance · UTC day';
+                }
+
+                document.getElementById('exPosCountVal').innerText    = ea.positions.length;
+                document.getElementById('exPosTableCount').innerText  = ea.positions.length;
+                document.getElementById('exchangeUpdateTime').innerText = 'Updated ' + new Date().toLocaleTimeString('en-GB');
+                updateDailyProfit30dChart(data.daily_profit_30d);
+
+                // Render exchange positions table
+                const botGroups = {};
+                for (const [posKey, pos] of Object.entries(data.open_positions || {})) {
+                    const groupKey = positionGroupKey(pos.symbol, pos.side);
+                    if (!botGroups[groupKey]) botGroups[groupKey] = [];
+                    botGroups[groupKey].push({ key: posKey, ...pos });
+                }
+
+                let exHTML = '';
+                for (const p of ea.positions) {
+                    const groupKey = positionGroupKey(p.symbol, p.side);
+                    const botMatches = botGroups[groupKey] || [];
+
+                    // Size = notional USDT at mark price
+                    const sizeVal   = Math.abs(p.positionAmt) * (p.markPrice || p.entryPrice || 0);
+                    const sizeColor = p.side === 'Long' ? 'var(--up)' : 'var(--down)';
+                    const sizeSign  = p.side === 'Long' ? '+' : '-';
+
+                    // Prices
+                    const pricePrec = p.entryPrice < 0.01 ? 6 : p.entryPrice < 1 ? 5 : p.entryPrice < 100 ? 4 : 2;
+                    const fmtPx = v => v > 0 ? Number(v).toFixed(pricePrec) : '—';
+
+                    // Liq price — red if close to mark (within 5%)
+                    const liqDist = p.liquidationPrice > 0 && p.markPrice > 0
+                        ? Math.abs(p.liquidationPrice - p.markPrice) / p.markPrice : 1;
+                    const liqColor = liqDist < 0.05 ? 'color:var(--down);font-weight:700' : 'color:var(--text-dim)';
+
+                    // PNL: recalculate from live price if available, fallback to stale REST value
+                    const livePrice = livePrices[p.symbol];
+                    let pnl;
+                    if (livePrice && p.entryPrice > 0 && Math.abs(p.positionAmt) > 0) {
+                        const qty = Math.abs(p.positionAmt);
+                        pnl = p.side === 'Long'
+                            ? (livePrice - p.entryPrice) * qty
+                            : (p.entryPrice - livePrice) * qty;
+                    } else {
+                        pnl = Number(p.unrealizedProfit) || 0;
+                    }
+                    const pnlColor = pnl >= 0 ? 'var(--up)' : 'var(--down)';
+                    const pnlSign  = pnl >= 0 ? '+' : '';
+                    // ROI = PnL / initial margin; initial margin = notional / leverage
+                    const initialMargin = sizeVal / (p.leverage || 10);
+                    const roi = initialMargin > 0 ? (pnl / initialMargin * 100) : 0;
+                    const roiSign = roi >= 0 ? '+' : '';
+
+                    // Strategy + SL/TP (bot metadata)
+                    const strategyText = botMatches.length
+                        ? botMatches.map(x => strategyLabel(x.tab)).join('<br>')
+                        : '<span style="color:var(--text-muted);font-size:11px;">Untracked</span>';
+                    const slTpText = botMatches.length
+                        ? botMatches.map(x => {
+                            const hasProtection = x.sl_order_id && x.tp_order_id;
+                            const legs = hasProtection
+                                ? `<div style="font-size:11px;color:var(--text-dim);margin-top:2px;">${Number(x.sl||0).toFixed(pricePrec)} -> ${Number(x.tp||0).toFixed(pricePrec)}</div>`
+                                : '';
+                            return `${renderProtectionBadge(x, true, protectionOpts)}${legs}`;
+                          }).join('<br>')
+                        : '—';
+
+                    exHTML += `
+                        <tr>
+                            <td>
+                                <div style="font-weight:700;font-size:13px;">${symbolLink(p.symbol)}</div>
+                                <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">Perp · ${p.leverage}x</div>
+                            </td>
+                            <td style="font-family:monospace;color:${sizeColor};font-weight:600;">
+                                ${sizeSign}${sizeVal.toLocaleString(undefined,{maximumFractionDigits:2})} USDT
+                            </td>
+                            <td style="font-family:monospace;">${fmtPx(p.entryPrice)}</td>
+                            <td style="font-family:monospace;">${fmtPx(p.markPrice)}</td>
+                            <td style="font-family:monospace;${liqColor};">${fmtPx(p.liquidationPrice)}</td>
+                            <td>
+                                <div style="color:${pnlColor};font-weight:700;font-size:13px;">${pnlSign}${pnl.toFixed(2)} USDT</div>
+                                <div style="color:${pnlColor};font-size:11px;">${roiSign}${roi.toFixed(2)}%</div>
+                            </td>
+                            <td style="font-size:12px;">
+                                <div>${strategyText}</div>
+                                <div style="margin-top:3px;">${slTpText}</div>
+                            </td>
+                        </tr>`;
+                }
+                if (!exHTML) exHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:1.5rem;">No open positions on exchange.</td></tr>`;
+                document.getElementById('exPosTable').innerHTML = exHTML;
+            } else {
+                exPanel.style.display = 'none';
+                exPosPanel.style.display = 'none';
+                document.getElementById('botPosPanel').style.display = 'block';
+                const dailyBtn = document.getElementById('dailyProfit30dBtn');
+                if (dailyBtn) dailyBtn.style.display = 'none';
+                closeDailyProfit30dModal();
+            }
+
+            // Compute balance totals (used internally for equity chart baseline)
+            let currentBalance = 0;
+            let currentUnrealized = 0;
+            if (activeTabFilter === 'All') {
+                for(let k in data.balances) currentBalance += data.balances[k];
+                for(let k in data.unrealized_pnls) currentUnrealized += data.unrealized_pnls[k];
+            } else {
+                currentBalance = data.balances[activeTabFilter] || 0;
+                currentUnrealized = data.unrealized_pnls[activeTabFilter] || 0;
+            }
+
+            // Analyze History — stats use reconciled closes; Recent Trades table may use Binance cache in live
+            const statsTrades = closedTradesForStats(data);
+            const targetHist = statsTradesForFilter(data, statsTrades, activeTabFilter);
+            const pnlSummary = data.pnl_summary || {};
+            const fallbackRealized = targetHist.reduce((s, t) => s + Number(t.pnl_usd || 0), 0);
+            const fallbackUnrealized = activeTabFilter === 'All'
+                ? enabledTabsForAll(data).reduce(
+                    (s, tab) => s + Number((data.unrealized_pnls || {})[tab] || 0), 0
+                )
+                : Number((data.unrealized_pnls || {})[activeTabFilter] || 0);
+            let summary = activeTabFilter === 'All'
+                ? summarizeEnabledTabs(data, pnlSummary)
+                : ((pnlSummary.per_tab || {})[activeTabFilter] || {realized: fallbackRealized, unrealized: fallbackUnrealized, total: fallbackRealized + fallbackUnrealized});
+            if (data.live_mode && activeTabFilter !== 'All') {
+                const tab = activeTabFilter;
+                const openCount = Object.values(data.open_positions || {}).filter(p => p.tab === tab).length;
+                const idleOff = !shouldUseBinanceIncomeForTab(data, tab, { open: openCount, trades: targetHist.length });
+                if (idleOff) {
+                    summary = {
+                        realized: fallbackRealized,
+                        unrealized: fallbackUnrealized,
+                        total: fallbackRealized + fallbackUnrealized,
+                    };
+                }
+            }
+            const pnlView = buildPnlChartView(
+                data,
+                activeTabFilter === 'All'
+                    ? { ...pnlSummary, all: summary, strategy: summary, account: null }
+                    : { ...pnlSummary, per_tab: { ...(pnlSummary.per_tab || {}), [activeTabFilter]: summary } },
+                activeTabFilter
+            );
+            const totalPnlNow = Number(pnlView.chartTotal || 0);
+            const unrealizedPnl = Number(pnlView.unrealized || 0);
+            const hasOpenPnl = pnlView.hasOpenPnl
+                || Object.values(data.open_positions || {}).some(p => positionMatchesTabFilter(data, p.tab, activeTabFilter));
+
+            document.getElementById('totalTradesVal').innerText = targetHist.length;
+            const tradesSub = document.getElementById('totalTradesSub');
+            if (tradesSub) {
+                tradesSub.textContent = data.live_mode
+                    ? 'Bot closes (tab_stats / reconciled)'
+                    : 'Simulated closes';
+            }
+            updateSidePnlCards(data, targetHist);
+
+            // ── Strategy Performance: trade counts from reconciled closes; $ PnL from Binance income in live ──
+            if (wsFull || IS_MOBILE_LITE) {
+                const liveAllocation = buildLivePnlAllocation(data);
+                const stratStatsData = {};
+                const stratRows = ['Tab1','Tab2','Tab3','Tab4','Tab5','Tab6','Tab7','Tab8','Tab9','Tab10','Tab11','Tab12','Tab13','Tab14','Tab15','Tab16','Tab17','Tab18','SafeGuard','Recovered'];
+                for(let tab of stratRows) {
+                    stratStatsData[tab] = {open:0, openLong:0, openShort:0, unrealized:0, trades:0, wins:0, grossWin:0, grossLoss:0, total:0, best:null, worst:null};
+                }
+                for (const [posKey, p] of Object.entries(data.open_positions || {})) {
+                    const tab = p.tab;
+                    if (!stratStatsData[tab]) stratStatsData[tab] = {open:0, openLong:0, openShort:0, unrealized:0, trades:0, wins:0, grossWin:0, grossLoss:0, total:0, best:null, worst:null};
+                    stratStatsData[tab].open++;
+                    if (p.side === 'Long') stratStatsData[tab].openLong++;
+                    else if (p.side === 'Short') stratStatsData[tab].openShort++;
+                    stratStatsData[tab].unrealized += positionUnrealizedPnl(posKey, p, data, liveAllocation);
+                }
+                for (const tab of stratRows) {
+                    fillStratRowFromStats(stratStatsData[tab], data, tab, statsTrades, !!data.live_mode);
+                }
+                if (data.live_mode) {
+                    for (const tab of stratRows) {
+                        applyStratGrossForTab(stratStatsData[tab], data, tab, statsTrades);
+                    }
+                }
+                const hideInactive = hideInactiveTabsEnabled();
+                let ssHTML = '';
+                const stratTotals = {open:0, openLong:0, openShort:0, unrealized:0, trades:0, wins:0, grossWin:0, grossLoss:0, total:0, best:null, worst:null};
+                for(let tab of stratRows) {
+                    if (!isTabDashboardVisible(tab, data, tabOpenCounts, hideInactive)) continue;
+                    const s = stratStatsData[tab];
+                    stratTotals.open += s.open;
+                    stratTotals.openLong += s.openLong;
+                    stratTotals.openShort += s.openShort;
+                    stratTotals.unrealized += s.unrealized;
+                    stratTotals.trades += s.trades;
+                    stratTotals.wins += s.wins;
+                    stratTotals.grossWin += s.grossWin;
+                    stratTotals.grossLoss += s.grossLoss;
+                    stratTotals.total += s.total;
+                    if(s.best !== null && (stratTotals.best === null || s.best > stratTotals.best)) stratTotals.best = s.best;
+                    if(s.worst !== null && (stratTotals.worst === null || s.worst < stratTotals.worst)) stratTotals.worst = s.worst;
+                }
+                finalizeStratSumRow(data, stratTotals);
+                const topRanks = computeStratTopRanks(stratStatsData, stratRows);
+                for(let tab of stratRows) {
+                    if (!isTabDashboardVisible(tab, data, tabOpenCounts, hideInactive)) continue;
+                    const s = stratStatsData[tab];
+                    const topRank = topRanks[tab];
+
+                    const tfRaw = (tab === 'SafeGuard' || tab === 'Recovered') ? '' : ((data.tab_timeframes && data.tab_timeframes[tab]) || '');
+                    const tfText = tfRaw ? String(tfRaw).toUpperCase() : '—';
+                    const label = strategyTableLabel(tab);
+                    const labelTitle = strategyDisplayLabel(tab);
+                    const tfBadge = tfText === '—'
+                        ? `<span style="color:var(--text-muted);">—</span>`
+                        : `<span style="display:inline-block; padding:1px 4px; border:1px solid var(--glass-border); border-radius:999px; color:var(--accent); background:rgba(88,166,255,.08); font-weight:800; font-size:9px;">${tfText}</span>`;
+                    const hasData = stratRowHasData(s);
+                    const wr    = s.trades > 0 ? (s.wins / s.trades * 100) : 0;
+                    const wrCol    = wr    >= 50 ? 'var(--up)' : 'var(--down)';
+                    const unrealizedCol = s.unrealized >= 0 ? 'var(--up)' : 'var(--down)';
+                    const unrealizedText = s.open > 0 || Math.abs(s.unrealized) > 0.000001
+                        ? (s.unrealized >= 0 ? '+' : '') + formatMoney(s.unrealized)
+                        : '—';
+                    const closeBtn = s.open > 0
+                        ? `<button class="btn-inline" data-tab="${tab}" data-open="${s.open}" onclick="closeStrategyPositions(this.dataset.tab, Number(this.dataset.open || 0))">Close</button>`
+                        : `<span style="color:var(--text-muted);">—</span>`;
+                    const tabOn = tab !== 'SafeGuard' && tab !== 'Recovered' && (data.tab_enabled || {})[tab] === true;
+                    const tabSwitch = (tab !== 'SafeGuard' && tab !== 'Recovered')
+                        ? strategyTabSwitchHtml(tab, tabOn)
+                        : '';
+                    const tabIdleOff = !hideInactive && tab !== 'SafeGuard' && tab !== 'Recovered' && !tabOn && s.open === 0;
+                    const rowPnlPositive = !topRank && hasData && s.total > 0;
+                    const rowClass = topRank
+                        ? stratTopRowClass(topRank)
+                        : (rowPnlPositive ? 'strat-row-pnl-positive' : '')
+                        + (tab === 'Recovered' ? ' strat-row-recovered' : '')
+                        + (tabIdleOff ? ' strat-row-off' : '');
+                    ssHTML += `<tr class="${rowClass.trim()}" style="border-bottom:1px solid #21262d;">
+                        <td style="padding:7px 10px; font-weight:600; color:var(--text-main);">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                ${tabSwitch}<span class="strat-name-label" title="${escapeHtml(labelTitle)}">${escapeHtml(label)}</span>${stratTopBadgeHtml(topRank)}
+                            </div>
+                        </td>
+                        <td style="text-align:center; padding:7px 10px;">${tfBadge}</td>
+                        ${stratTotalPnlCellHtml(s.total, hasData, false, topRank)}
+                        <td style="text-align:right; padding:7px 10px; color:var(--text-dim);">${hasData ? s.wins+' / '+(s.trades-s.wins) : '—'}</td>
+                        <td style="text-align:right; padding:7px 10px; font-weight:700; color:${hasData?wrCol:'var(--text-muted)'};">${s.trades > 0 ? wr.toFixed(1)+'%' : '—'}</td>
+                        <td style="text-align:right; padding:7px 10px;">${formatStratOpenLsCell(s.openLong, s.openShort, false)}</td>
+                        <td style="text-align:right; padding:7px 10px; color:var(--up); font-weight:600;">${formatStratGrossProfit(hasData, s.grossWin)}</td>
+                        <td style="text-align:right; padding:7px 10px; color:var(--down); font-weight:600;">${formatStratGrossLoss(hasData, s.grossLoss)}</td>
+                        <td style="text-align:right; padding:7px 10px; font-weight:800; color:${unrealizedText==='—'?'var(--text-muted)':unrealizedCol};">${unrealizedText}</td>
+                        <td style="text-align:right; padding:7px 10px;">${closeBtn}</td>
+                    </tr>`;
+                }
+                const totalHasData = stratSumRowHasData(data, stratTotals);
+                const totalLosses = Math.max(0, stratTotals.trades - stratTotals.wins);
+                const totalWr = totalHasData && stratTotals.trades > 0
+                    ? (stratTotals.wins / stratTotals.trades * 100)
+                    : 0;
+                const showSumUnrealized = data.live_mode
+                    ? Math.abs(stratTotals.unrealized) > 0.000001
+                    : (stratTotals.open > 0 || Math.abs(stratTotals.unrealized) > 0.000001);
+                const totalUnrealizedText = showSumUnrealized
+                    ? (stratTotals.unrealized >= 0 ? '+' : '') + formatMoney(stratTotals.unrealized)
+                    : '—';
+                const totalUnrealizedCol = stratTotals.unrealized >= 0 ? 'var(--up)' : 'var(--down)';
+                const totalWrCol = totalWr >= 50 ? 'var(--up)' : 'var(--down)';
+                const totalRowPositive = totalHasData && stratTotals.total > 0;
+                const totalRowClass = totalRowPositive ? 'strat-row-pnl-positive' : '';
+                const totalRowBg = totalRowPositive ? '' : ' background:rgba(255,255,255,0.03);';
+                ssHTML += `<tr class="${totalRowClass.trim()}" style="border-top:2px solid var(--glass-border);${totalRowBg}">
+                    <td style="padding:8px 10px; font-weight:900; color:var(--text-main);">SUM</td>
+                    <td style="text-align:center; padding:8px 10px; color:var(--text-muted); font-weight:800;">Mixed</td>
+                    ${stratTotalPnlCellHtml(stratTotals.total, totalHasData, true, 0)}
+                    <td style="text-align:right; padding:8px 10px; font-weight:800; color:${totalHasData?'var(--text-main)':'var(--text-muted)'};">${totalHasData ? stratTotals.wins+' / '+totalLosses : '—'}</td>
+                    <td style="text-align:right; padding:8px 10px; font-weight:800; color:${totalHasData?totalWrCol:'var(--text-muted)'};">${totalHasData ? totalWr.toFixed(1)+'%' : '—'}</td>
+                    <td style="text-align:right; padding:8px 10px;">${formatStratOpenLsCell(stratTotals.openLong, stratTotals.openShort, true)}</td>
+                    <td style="text-align:right; padding:8px 10px; font-weight:800; color:var(--up);">${formatStratGrossProfit(totalHasData, stratTotals.grossWin)}</td>
+                    <td style="text-align:right; padding:8px 10px; font-weight:800; color:var(--down);">${formatStratGrossLoss(totalHasData, stratTotals.grossLoss)}</td>
+                    <td style="text-align:right; padding:8px 10px; font-weight:900; color:${totalUnrealizedText==='—'?'var(--text-muted)':totalUnrealizedCol};">${totalUnrealizedText}</td>
+                    <td style="text-align:right; padding:8px 10px; color:var(--text-muted);">—</td>
+                </tr>`;
+                ssHTML += formatFundingBreakdownRow(data, stratTotals);
+                if(!ssHTML) ssHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:14px;">No trades yet</td></tr>';
+                document.getElementById('stratStatsBody').innerHTML = ssHTML;
+                updateStatsSourceLegend(data);
+                syncTabBarVisibility(data, tabOpenCounts);
+                renderInactiveDrawer(data, tabOpenCounts);
+            }
+
+            // Top-level stats use targetHist (tab-specific when a tab is selected, global for All)
+            if (data._fromWS && targetHist.length > 0) previousTradeCount = targetHist.length;
+            if (wsFull) {
+            paintEquityChart(
+                data,
+                useMarginEquityCurve(data, activeTabFilter)
+                    ? buildMarginEquityCurve(data)
+                    : buildStrategyGrossCurve(data, statsTrades, activeTabFilter, hasOpenPnl)
+            );
+
+            const activityTimes = [];
+            for (const h of targetHist) {
+                const rawTime = h.entry_time || h.exit_time;
+                const dt = new Date(normalizeIsoUtc(rawTime));
+                if (!Number.isNaN(dt.getTime())) activityTimes.push(dt);
+            }
+            for (const p of Object.values(data.open_positions || {})) {
+                if (!positionMatchesTabFilter(data, p.tab, activeTabFilter)) continue;
+                const dt = new Date(normalizeIsoUtc(p.entry_time));
+                if (!Number.isNaN(dt.getTime())) activityTimes.push(dt);
+            }
+            if (activityTimes.length > 0) {
+                const firstActivity = new Date(Math.min(...activityTimes.map(dt => dt.getTime())));
+                const daySpan = Math.max(1, (Date.now() - firstActivity.getTime()) / (1000 * 60 * 60 * 24));
+                const avgDay = totalPnlNow / daySpan;
+                document.getElementById('avgDayVal').innerText = (avgDay >= 0 ? '+' : '') + formatMoney(avgDay);
+                document.getElementById('avgDayVal').className = 'value ' + (avgDay >= 0 ? 'green' : 'red');
+                const avgSub = document.querySelector('#avgDayVal')?.closest('.stat-card')?.querySelector('.sub-value');
+                if (avgSub) {
+                    avgSub.textContent = activeTabFilter === 'All'
+                        ? `Since first trade · ${enabledTabsMetricsNote(data)}`
+                        : 'Since first trade';
+                }
+            } else {
+                document.getElementById('avgDayVal').innerText = '—';
+                document.getElementById('avgDayVal').className = 'value';
+            }
+
+            const chartRealized = targetHist.length > 0
+                ? (() => {
+                    const eq = equitySeriesForFilter(data);
+                    if (eq && eq.length) {
+                        const last = eq[eq.length - 1];
+                        return Number(last.cumulative || 0);
+                    }
+                    return targetHist.reduce((s, t) => s + Number(t.pnl_usd || 0), 0);
+                })()
+                : 0;
+            updateRiskMetricCards(data, targetHist, chartNowTotal(chartRealized, unrealizedPnl));
+            }
+
+            renderTables(data, wsFull);
+            if (wsFull) handleTpCloseBeep(data);
+        }
+
+        function renderTables(data, wsFull = true) {
+            const protectionOpts = { sltp_mode: data.sltp_mode || (data.local_sltp ? 'local' : 'binance'), testnet: !!data.testnet };
+            const isAll = activeTabFilter === 'All';
+
+            // All  → show Binance positions, hide bot Open Positions
+            // Tab  → show bot Open Positions, hide Binance positions
+            document.getElementById('exchangePosPanel').style.display =
+                (isAll && data.live_mode && data.exchange_account && Array.isArray(data.exchange_account.positions)) ? 'block' : 'none';
+            document.getElementById('botPosPanel').style.display = isAll ? 'none' : 'block';
+
+            // Filter Positions
+            const posTable = document.getElementById('posTable');
+            const targetPositions = Object.entries(data.open_positions).filter(
+                ([k, p]) => activeTabFilter === 'All' || p.tab === activeTabFilter
+            );
+            const liveAllocation = buildLivePnlAllocation(data);
+
+            document.getElementById('posCount').innerText = targetPositions.length + (activeTabFilter === 'All' ? ' Active Total' : ' in ' + activeTabFilter);
+            
+            let posHTML = '';
+
+            for (const [pos_key, pos] of targetPositions) {
+                let sym = pos.symbol;
+                let livePrice = data.latest_prices && data.latest_prices[pos_key] ? data.latest_prices[pos_key] : pos.entry_price;
+                const pnl = positionUnrealizedPnl(pos_key, pos, data, liveAllocation);
+                if (liveAllocation[pos_key]) {
+                    livePrice = liveAllocation[pos_key].markPrice;
+                } else if (data.live_mode && data.exchange_account && data.exchange_account.positions) {
+                    const matchSide = pos.side === 'Long' ? 'Long' : 'Short';
+                    const eaPos = data.exchange_account.positions.find(
+                        x => x.symbol === sym && x.side === matchSide
+                    );
+                    if (eaPos && eaPos.markPrice) livePrice = eaPos.markPrice;
+                } else {
+                    const mark = (data.latest_prices || {})[pos_key] ?? (data.live_prices || {})[sym];
+                    if (mark) livePrice = mark;
+                }
+
+                let priceClass = '';
+                if(lastPrices[pos_key]) {
+                    if (livePrice > lastPrices[pos_key]) priceClass = 'style="color: var(--up);"';
+                    if (livePrice < lastPrices[pos_key]) priceClass = 'style="color: var(--down);"';
+                }
+                lastPrices[pos_key] = livePrice;
+                
+
+                
+                let pnlColor = pnl >= 0 ? 'color: var(--up);' : 'color: var(--down);';
+                let pnlPlus = pnl >= 0 ? '+' : '';
+                
+                const statusVis = `
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:7px;">
+                        ${renderProtectionBadge(pos, data.live_mode, protectionOpts)}
+                        ${renderSlTpPanel(pos, livePrice)}
+                    </div>
+                `;
+
+                const entryDt = pos.entry_time ? new Date(pos.entry_time) : null;
+                const entryTimeStr = entryDt
+                    ? entryDt.toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false})
+                    : '—';
+
+                posHTML += `
+                    <tr>
+                        <td style="font-weight:600">${symbolLink(sym, ` <span style="font-size:11px;color:var(--text-muted);font-weight:normal;margin-left:4px;">[${strategyLabel(pos.tab)}]</span>`)}</td>
+                        <td><span class="badge ${pos.side}">${pos.side}</span></td>
+                        <td style="text-align:center;">${statusVis}</td>
+                        <td style="font-family:monospace;">${parseFloat(pos.entry_price).toFixed(4)}</td>
+                        <td style="font-size:12px;color:var(--text-dim);white-space:nowrap;">${entryTimeStr}</td>
+                        <td class="live-price" ${priceClass}>${parseFloat(livePrice).toFixed(4)}</td>
+                        <td style="font-weight:900; font-size:16px; ${pnlColor}">${pnlPlus}${formatMoney(pnl)}</td>
+                    </tr>
+                `;
+            }
+            if(!posHTML) {
+                if (activeTabFilter === 'All') {
+                    posHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:2rem;">No open positions currently. Scanning the markets...</td></tr>`;
+                } else {
+                    const tabTf = (data.tab_timeframes && data.tab_timeframes[activeTabFilter]) || 'n/a';
+                    const tabEnabled = (data.tab_enabled || {})[activeTabFilter] === true;
+                    const tabBalance = Number((data.balances || {})[activeTabFilter] || 0);
+                    const tabUnrealized = Number((data.unrealized_pnls || {})[activeTabFilter] || 0);
+                    const tabHistoryCount = (data.recent_history || []).filter(h => h.tab === activeTabFilter).length;
+                    const totalStatePositions = Object.keys(data.open_positions || {}).length;
+                    posHTML = `
+                        <tr>
+                            <td colspan="7" style="padding:18px;color:var(--text-dim);">
+                                <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;">
+                                    <div style="font-weight:700;color:var(--text-main);">${strategyLabel(activeTabFilter)} has no open position in bot state</div>
+                                    <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;">
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">Tab: <b>${activeTabFilter}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">TF: <b>${String(tabTf).toUpperCase()}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">Signals: <b style="color:${tabEnabled ? 'var(--up)' : 'var(--down)'}">${tabEnabled ? 'ON' : 'OFF'}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">${data.live_mode ? 'Ledger' : 'Balance'}: <b>${formatMoney(tabBalance)}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">Unrealized: <b>${formatMoney(tabUnrealized)}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">History: <b>${tabHistoryCount}</b></span>
+                                        <span style="border:1px solid var(--glass-border);border-radius:6px;padding:4px 8px;">All open state: <b>${totalStatePositions}</b></span>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>`;
+                }
+            }
+            posTable.innerHTML = posHTML;
+
+            if (!wsFull) return;
+
+            renderSymbolLeaderboard(data, activeTabFilter);
+        }
+
+
+        // Signal countdowns
+        function nextUtcBoundary(now, hours) {
+            const nextHour = (Math.floor(now.getUTCHours() / hours) + 1) * hours;
+            const nextCheck = new Date(now);
+            if (nextHour >= 24) {
+                nextCheck.setUTCDate(now.getUTCDate() + 1);
+                nextCheck.setUTCHours(0, 0, 0, 0);
+            } else {
+                nextCheck.setUTCHours(nextHour, 0, 0, 0);
+            }
+            return nextCheck;
+        }
+
+        function formatCountdown(diff) {
+            const h = Math.floor(diff / (1000 * 60 * 60));
+            const m = Math.floor((diff / 1000 / 60) % 60);
+            const s = Math.floor((diff / 1000) % 60);
+            return h.toString().padStart(2, '0') + ':' +
+                m.toString().padStart(2, '0') + ':' +
+                s.toString().padStart(2, '0');
+        }
+
+        function updateTimer() {
+            const now = new Date();
+            document.getElementById('countdownTimer').innerText =
+                formatCountdown(nextUtcBoundary(now, 4) - now);
+            document.getElementById('countdownTimer1h').innerText =
+                formatCountdown(nextUtcBoundary(now, 1) - now);
+        }
+        setInterval(updateTimer, 1000);
+        updateTimer();
+
+        // ── Binance Live Trades (cache / WS — no per-request Binance REST) ─────
+        function renderBinanceTradesTable(trades, statusNote) {
+            const tbody = document.getElementById('binanceTradesTable');
+            const status = document.getElementById('binanceTradesStatus');
+            if (!tbody || !status) return;
+            if (!Array.isArray(trades) || trades.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:1.5rem;">No trades found</td></tr>`;
+                status.textContent = statusNote || 'no trades';
+                return;
+            }
+            let html = '';
+            for (const t of trades) {
+                const pnl = parseFloat(t.realizedPnl || 0);
+                const pnlColor = pnl > 0 ? 'color:var(--up)' : pnl < 0 ? 'color:var(--down)' : 'color:var(--text-dim)';
+                const pnlStr = pnl !== 0 ? (pnl > 0 ? '+' : '') + pnl.toFixed(4) : '—';
+                const comm = parseFloat(t.commission || 0);
+                const d = t.time ? new Date(t.time) : null;
+                const timeStr = d ? (d.getMonth()+1)+'/'+d.getDate()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0') : '—';
+                const sideClass = t.side === 'BUY' ? 'Long' : 'Short';
+                html += `<tr>
+                    <td style="font-weight:600">${t.symbol || '—'}</td>
+                    <td><span class="badge ${sideClass}">${t.side}</span></td>
+                    <td style="color:var(--text-dim);font-size:12px;">${t.positionSide || '—'}</td>
+                    <td style="font-family:monospace;">${parseFloat(t.price||0).toFixed(4)}</td>
+                    <td style="font-family:monospace;">${parseFloat(t.qty||0)}</td>
+                    <td style="font-family:monospace;font-weight:700;${pnlColor}">${pnlStr}</td>
+                    <td style="font-family:monospace;color:var(--text-dim);font-size:11px;">-${comm.toFixed(4)} ${t.commissionAsset||''}</td>
+                    <td style="color:var(--text-dim);font-size:12px;">${timeStr}</td>
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+            status.textContent = `${trades.length} trades · ${statusNote || 'cache'}`;
+        }
+
+        async function loadBinanceTrades(refresh) {
+            const status = document.getElementById('binanceTradesStatus');
+            if (status) status.textContent = 'loading...';
+            try {
+                const q = refresh ? '?limit=50&refresh=1' : '?limit=50';
+                const res = await fetch('/api/trades' + q, { headers: authHeaders() });
+                if (!res.ok) { if (status) status.textContent = 'unavailable (paper mode?)'; return; }
+                const body = await res.json();
+                const trades = Array.isArray(body) ? body : (body.trades || []);
+                renderBinanceTradesTable(trades, body.stale ? 'cache (refreshing)' : 'cache');
+            } catch(e) {
+                if (status) status.textContent = 'error: ' + e.message;
+            }
+        }
+
+        function initBinanceTrades(isLive) {
+            const section = document.getElementById('binanceTradesSection');
+            if (!isLive) return;
+            section.style.display = '';
+            loadBinanceTrades(false);
+            setInterval(() => loadBinanceTrades(false), 300000);
+        }
+        let _binanceTradesInited = false;
+
+        // UDS Status + Margin Alert + Close-All button
+        function updateLiveStatus(data) {
+            const udsBox  = document.getElementById('udsStatusBox');
+            const udsBall = document.getElementById('udsStatusBall');
+            const udsTxt  = document.getElementById('udsStatusText');
+            const alert   = document.getElementById('marginAlert');
+            const closeBox = document.getElementById('closeEmergencyBox');
+
+            if (data.live_mode) {
+                udsBox.style.display = 'flex';
+                if (closeBox) closeBox.style.display = 'flex';
+                if (data.uds_connected) {
+                    udsBall.style.background = 'var(--up)';
+                    udsBall.style.boxShadow  = '0 0 8px var(--up)';
+                    udsTxt.style.color = 'var(--up)';
+                    udsTxt.innerText = 'Fill Stream OK';
+                    udsBox.style.borderLeftColor = 'var(--up)';
+                } else {
+                    udsBall.style.background = 'var(--down)';
+                    udsBall.style.boxShadow  = '0 0 8px var(--down)';
+                    udsTxt.style.color = 'var(--down)';
+                    udsTxt.innerText = 'Fill Stream DOWN';
+                    udsBox.style.borderLeftColor = 'var(--down)';
+                }
+                const ea = data.exchange_account;
+                alert.style.display = (ea && ea.low_margin_alert) ? 'block' : 'none';
+                // Circuit breaker
+                const cbEl = document.getElementById('circuitBreakerAlert');
+                if (data.circuit_breaker) {
+                    cbEl.style.display = 'block';
+                    document.getElementById('cbLossText').innerText =
+                        `Daily loss: $${(data.daily_loss_usd||0).toFixed(2)} — trading halted until midnight UTC`;
+                } else {
+                    cbEl.style.display = 'none';
+                }
+            } else {
+                udsBox.style.display = 'none';
+                if (closeBox) closeBox.style.display = 'none';
+                alert.style.display = 'none';
+            }
+        }
+
+        function formatAgeSec(sec) {
+            if (sec === null || sec === undefined) return 'n/a';
+            if (sec < 60) return `${sec}s`;
+            const min = Math.floor(sec / 60);
+            if (min < 60) return `${min}m`;
+            return `${Math.floor(min / 60)}h`;
+        }
+
+        function renderApiBanBanner(data) {
+            const banner = document.getElementById('apiBanBanner');
+            const summary = document.getElementById('apiBanSummary');
+            if (!banner || !summary) return;
+            const ban = data.binance_rate_limit || (data.health || {}).binance_rate_limit || {};
+            if (!data.live_mode || !ban.active) {
+                banner.style.display = 'none';
+                summary.innerText = '';
+                return;
+            }
+            const remaining = Number(ban.remaining_sec || 0);
+            const until = ban.until_utc ? ` until ${ban.until_utc}` : '';
+            const reason = ban.reason ? ` · ${ban.reason}` : '';
+            banner.style.display = 'block';
+            summary.innerText =
+                `REST backoff${until} (${remaining}s left). New entries paused; sync/history throttled.${reason}`;
+        }
+
+        function renderHealthMonitor(data) {
+            const card = document.getElementById('healthCard');
+            const statusVal = document.getElementById('healthStatusVal');
+            const subVal = document.getElementById('healthSubVal');
+            const clearBtn = document.getElementById('clearHealthWarningsBtn');
+            if (!card || !statusVal || !subVal) return;
+
+            if (!data.live_mode) {
+                statusVal.innerText = 'PAPER';
+                statusVal.style.color = 'var(--accent)';
+                card.style.borderLeftColor = 'var(--accent)';
+                subVal.innerText = 'Live monitor idle';
+                if (clearBtn) clearBtn.style.display = 'none';
+                return;
+            }
+
+            const health = data.health || {};
+            const apiBan = data.binance_rate_limit || health.binance_rate_limit || {};
+            const syncIssues = health.sync_issue_count || 0;
+            const acknowledgedSyncIssues = Math.min(syncIssues, acknowledgedSyncIssueCount);
+            const visibleSyncIssues = Math.max(0, syncIssues - acknowledgedSyncIssues);
+            const visibleReasons = (health.reasons || []).filter((reason) => {
+                return !(syncIssues > 0 && visibleSyncIssues === 0 && /sync issue\(s\)/i.test(reason || ''));
+            });
+            let status = (health.status || 'ok').toUpperCase();
+            if (apiBan.active && status === 'OK') status = 'WARNING';
+            if (status === 'WARNING' && !visibleReasons.length) {
+                status = 'OK';
+            }
+            const color = status === 'CRITICAL'
+                ? 'var(--down)'
+                : (status === 'WARNING' ? '#e3b341' : 'var(--up)');
+
+            statusVal.innerText = status;
+            statusVal.style.color = color;
+            card.style.borderLeftColor = color;
+
+            const syncAge = formatAgeSec(health.last_sync_age_sec);
+            const accountAge = formatAgeSec(health.last_exchange_account_age_sec);
+            const priceWsAge = formatAgeSec(health.last_price_ws_age_sec);
+            const schedulerAge = formatAgeSec(health.last_scheduler_age_sec);
+            const watchdogAge = formatAgeSec(health.last_watchdog_age_sec);
+            const error1h = health.error_count_1h || 0;
+            const reason = visibleReasons[0];
+            const banHint = apiBan.active
+                ? `API ban ${apiBan.remaining_sec || 0}s`
+                : '';
+            const firstRisk = (health.protection_risks || [])[0];
+            const riskHint = firstRisk
+                ? ` · ${escapeHtml(firstRisk.symbol)} ${escapeHtml(firstRisk.status)}`
+                : '';
+            const hasClearableWarnings = error1h > 0 || syncIssues > 0 || (health.recent_errors || []).length > 0;
+            if (clearBtn) clearBtn.style.display = hasClearableWarnings ? 'inline-block' : 'none';
+            const heartbeatText = `ws ${priceWsAge} · sched ${schedulerAge} · wd ${watchdogAge}`;
+            const lead = banHint || reason;
+            subVal.innerText = lead
+                ? `${lead}${riskHint} · ${heartbeatText} · err 1h ${error1h} · sync ${syncAge}`
+                : `${heartbeatText} · err 1h ${error1h} · sync ${syncAge} · acct ${accountAge} · issues ${visibleSyncIssues}`;
+
+            handleCriticalErrorBeep(data);
+        }
+
+        async function clearHealthWarnings() {
+            try {
+                const res = await fetch('/api/health/warnings/clear', { method: 'POST', headers: authHeaders() });
+                const data = await res.json();
+                showToast(`Cleared ${data.cleared_error_events || 0} health event(s) and ${data.cleared_sync_issues || 0} sync issue(s).`, 'Bot Health');
+                acknowledgeSyncIssueToasts(data.cleared_sync_issues || 0);
+            } catch(e) {
+                showToast('Failed to clear health warnings: ' + e, 'Error');
+            }
+        }
+
+        async function emergencyClosePositions(path, confirmMsg, toastTitle) {
+            if (!confirm(confirmMsg)) return;
+            try {
+                const res = await fetch(path, { method: 'POST', headers: authHeaders() });
+                const data = await res.json();
+                if (res.status === 429 || data.status === 'rate_limited') {
+                    const retry = data.retry_in_sec != null ? ` Retry in ${data.retry_in_sec}s.` : '';
+                    const closed = data.closed ? ` Closed ${data.closed} before stop.` : '';
+                    const left = data.binance_rate_limit?.remaining_sec;
+                    const wait = left != null ? ` (Binance backoff ${left}s)` : '';
+                    showToast((data.msg || 'Binance rate limit — stopped closing') + closed + retry + wait, 'Rate limit');
+                    return;
+                }
+                const legs = data.legs ? `, ${data.legs} leg(s)` : '';
+                const stale = data.stale_removed ? `, ${data.stale_removed} stale cleared` : '';
+                const failed = data.failed_count ? `, ${data.failed_count} failed` : '';
+                showToast(`Closed ${data.closed || 0}${stale}${failed}${legs}. ${data.msg || ''}`, toastTitle);
+            } catch(e) {
+                showToast('Failed to close positions: ' + e, 'Error');
+            }
+        }
+
+        function closeAllPositions() {
+            return emergencyClosePositions(
+                '/api/close-all',
+                'Close ALL open positions now? This will send market orders immediately.',
+                '🛑 Emergency Stop'
+            );
+        }
+
+        function closeAllLongPositions() {
+            return emergencyClosePositions(
+                '/api/close-all-long',
+                'Close ALL LONG positions now? SHORT positions will stay open.',
+                '📈 Close All Long'
+            );
+        }
+
+        function closeAllShortPositions() {
+            return emergencyClosePositions(
+                '/api/close-all-short',
+                'Close ALL SHORT positions now? LONG positions will stay open.',
+                '📉 Close All Short'
+            );
+        }
+
+        async function closeStrategyPositions(tab, openCount) {
+            const label = tab === 'SafeGuard' ? 'SafeGuard' : strategyLabel(tab);
+            if (!confirm(`Close ${openCount} open position(s) for ${label}? This will send market orders immediately.`)) return;
+            try {
+                const res = await fetch('/api/close-strategy', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab }),
+                });
+                const data = await res.json();
+                if (res.status === 429 || data.status === 'rate_limited') {
+                    const retry = data.retry_in_sec != null ? ` Retry in ${data.retry_in_sec}s.` : '';
+                    const closed = data.closed ? ` Closed ${data.closed} before stop.` : '';
+                    const left = data.binance_rate_limit?.remaining_sec;
+                    const wait = left != null ? ` (Binance backoff ${left}s)` : '';
+                    showToast((data.msg || 'Binance rate limit — stopped closing') + closed + retry + wait, 'Rate limit');
+                    return;
+                }
+                if (!res.ok) throw new Error(data.msg || data.error || res.statusText);
+                const failed = data.failed_count || 0;
+                const stale = data.stale_removed ? `, ${data.stale_removed} stale cleared` : '';
+                const msg = failed
+                    ? `Closed ${data.closed || 0}${stale} ${label} position(s), ${failed} failed.`
+                    : `Closed ${data.closed || 0}${stale} ${label} position(s).`;
+                showToast(msg, 'Strategy Close');
+            } catch(e) {
+                showToast('Failed to close strategy positions: ' + e, 'Error');
+            }
+        }
+
+        function renderSyncIssues(data) {
+            const issues = data.sync_issues || [];
+            const panel = document.getElementById('syncIssuePanel');
+            const banner = document.getElementById('syncIssueBanner');
+            const summary = document.getElementById('syncIssueSummary');
+            const clearBtn = document.getElementById('clearSyncIssuesBtn');
+
+            clearBtn.style.display = issues.length ? 'inline-block' : 'none';
+            banner.style.display = issues.length ? 'block' : 'none';
+
+            if (!issues.length) {
+                summary.innerText = '';
+                panel.innerHTML = '<span style="color:var(--text-muted);">No sync issues.</span>';
+            } else {
+                summary.innerHTML = `${issues.length} issue(s) during live reconciliation. `
+                    + `Close positions via dashboard <b>Close</b> per strategy — avoid manual close on Binance when multiple tabs share the same symbol.`;
+                panel.innerHTML = issues.map((issue) => {
+                    const ts = issue.created_at ? new Date(issue.created_at).toLocaleString('en-GB', {
+                        day: '2-digit',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                    }) : '—';
+                    return `
+                        <div class="issue-row">
+                            <div style="flex:1; color:var(--text-main);">${escapeHtml(issue.message)}</div>
+                            <div style="white-space:nowrap; color:var(--text-muted);">${ts} UTC</div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            if (issues.length > previousSyncIssueCount) {
+                if (issues.length > acknowledgedSyncIssueCount) {
+                    showToast(`${issues.length} sync issue(s) need review`, '⚠ Sync');
+                }
+            }
+            previousSyncIssueCount = issues.length;
+        }
+
+        function acknowledgeSyncIssueToasts(count) {
+            acknowledgedSyncIssueCount = Math.max(acknowledgedSyncIssueCount, count || previousSyncIssueCount || 0);
+            window.localStorage.setItem('acknowledgedSyncIssueCount', String(acknowledgedSyncIssueCount));
+            previousSyncIssueCount = Math.max(previousSyncIssueCount, acknowledgedSyncIssueCount);
+        }
+
+        async function clearSyncIssues() {
+            try {
+                const res = await fetch('/api/sync-issues/clear', { method: 'POST', headers: authHeaders() });
+                const data = await res.json();
+                showToast(`Cleared ${data.cleared || 0} sync issue(s).`, 'Sync');
+                acknowledgeSyncIssueToasts(data.cleared || 0);
+            } catch(e) {
+                showToast('Failed to clear sync issues: ' + e, 'Error');
+            }
+        }
+
+        // Log Viewer
+        let logVisible = !IS_MOBILE_LITE;
+        function toggleLog() {
+            logVisible = !logVisible;
+            document.getElementById('logPanel').style.display = logVisible ? 'block' : 'none';
+            document.getElementById('logToggleHint').innerText = logVisible ? '▼ collapse' : '▶ expand';
+            if (logVisible) {
+                fetchLogs();
+                startLogPolling();
+            } else {
+                stopLogPolling();
+            }
+        }
+
+        function startLogPolling() {
+            if (logPollTimer || document.hidden) return;
+            if (!logVisible && IS_MOBILE_LITE) return;
+            logPollTimer = setInterval(fetchLogs, LOG_POLL_MS);
+        }
+
+        function stopLogPolling() {
+            if (!logPollTimer) return;
+            clearInterval(logPollTimer);
+            logPollTimer = null;
+        }
+
+        async function fetchLogs() {
+            if (document.hidden || (!logVisible && IS_MOBILE_LITE)) return;
+            try {
+                const res  = await fetch('/api/logs', { headers: authHeaders() });
+                const data = await res.json();
+                const logs = data.logs || [];
+                const panel = document.getElementById('logPanel');
+                const wasBottom = panel.scrollHeight - panel.scrollTop <= panel.clientHeight + 20;
+                panel.innerHTML = logs.map(l => {
+                    const msg = String(l.msg || '');
+                    const isErr  = msg.includes('ERROR') || msg.includes('error') || msg.includes('⚠');
+                    const isOk   = msg.includes('ENTRY') || msg.includes('EXIT') || msg.includes('connected');
+                    const isIncome = msg.includes('[Income Sync]');
+                    const color  = isErr ? 'var(--down)' : isOk ? 'var(--up)' : isIncome ? 'var(--accent)' : 'var(--text-dim)';
+                    let body = escapeHtml(msg);
+                    if (isIncome) {
+                        const netM = msg.match(/net=\$(-?[\d.]+)/);
+                        if (netM) {
+                            const netColor = parseFloat(netM[1]) < 0 ? 'var(--down)' : 'var(--up)';
+                            body = escapeHtml(msg.slice(0, netM.index))
+                                + `<span style="color:${netColor};font-weight:700;">${escapeHtml(netM[0])}</span>`
+                                + escapeHtml(msg.slice(netM.index + netM[0].length));
+                        }
+                    }
+                    return `<div style="color:${color}; padding:1px 0; border-bottom:1px solid #21262d;"><span style="color:var(--text-muted);">${escapeHtml(l.t)}</span> ${body}</div>`;
+                }).join('') || '<span style="color:var(--text-muted);">No logs yet.</span>';
+                if (wasBottom) panel.scrollTop = panel.scrollHeight;
+            } catch(e) {}
+        }
+        if (!IS_MOBILE_LITE || logVisible) {
+            startLogPolling();
+            fetchLogs();
+        } else {
+            document.getElementById('logPanel').style.display = 'none';
+            document.getElementById('logToggleHint').innerText = '▶ expand';
+        }
+    
