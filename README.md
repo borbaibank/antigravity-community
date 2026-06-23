@@ -38,11 +38,11 @@
 
 | Tab | TF | กลยุทธ์ |
 |-----|-----|---------|
-| Tab11 | 1h | Volume Pressure Proxy |
-| Tab12 | 1h | Volume Spike Breakout |
-| Tab13–16 | 4h | Clone ของ Tab9–12 บน 4H |
-| Tab17 | 1h | Momentum Vol Pressure |
-| Tab18 | 1h | Vol ultimate |
+| Tab11 | 1h | secret |
+| Tab12 | 1h | secret |
+| Tab13–16 | 4h | secret |
+| Tab17 | 1h | secret |
+| Tab18 | 1h | secret|
 
 ติดตั้ง Pro หลัง Community:
 
